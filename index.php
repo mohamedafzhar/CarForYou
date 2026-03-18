@@ -215,79 +215,64 @@ $cars_json = json_encode($chatbot_cars);
     .parallax-layer.layer-3 { transform: translateZ(-300px) scale(1.6); }
     
     /* 3D Floating Particles */
-    .particle { position: absolute; border-radius: 50%; background: linear-gradient(135deg, var(--accent), transparent); opacity: 0.4; animation: float3d 6s ease-in-out infinite; }
-    .particle:nth-child(1) { width: 300px; height: 300px; top: 10%; left: -50px; animation-delay: 0s; }
-    .particle:nth-child(2) { width: 200px; height: 200px; top: 50%; right: -30px; animation-delay: 2s; background: linear-gradient(135deg, #a78bfa, transparent); }
-    .particle:nth-child(3) { width: 150px; height: 150px; bottom: 20%; left: 20%; animation-delay: 4s; background: linear-gradient(135deg, #22c55e, transparent); }
-    .particle:nth-child(4) { width: 100px; height: 100px; top: 30%; right: 30%; animation-delay: 1s; }
-    .particle:nth-child(5) { width: 80px; height: 80px; bottom: 40%; left: 60%; animation-delay: 3s; background: linear-gradient(135deg, #f59e0b, transparent); }
+    .particle { position: absolute; border-radius: 50%; background: linear-gradient(135deg, var(--accent), transparent); opacity: 0.3; animation: float3d 6s ease-in-out infinite; }
+    .particle:nth-child(1) { width: 400px; height: 400px; top: 5%; left: -100px; animation-delay: 0s; filter: blur(60px); }
+    .particle:nth-child(2) { width: 300px; height: 300px; top: 40%; right: -80px; animation-delay: 2s; background: linear-gradient(135deg, #a78bfa, transparent); filter: blur(50px); }
+    .particle:nth-child(3) { width: 250px; height: 250px; bottom: 10%; left: 30%; animation-delay: 4s; background: linear-gradient(135deg, #22c55e, transparent); filter: blur(40px); }
+    .particle:nth-child(4) { width: 200px; height: 200px; top: 20%; right: 20%; animation-delay: 1s; filter: blur(45px); }
+    .particle:nth-child(5) { width: 180px; height: 180px; bottom: 30%; right: 10%; animation-delay: 3s; background: linear-gradient(135deg, #f59e0b, transparent); filter: blur(35px); }
+    .particle:nth-child(6) { width: 150px; height: 150px; top: 60%; left: 5%; animation-delay: 5s; filter: blur(30px); }
     @keyframes float3d {
-        0%, 100% { transform: translateY(0) rotateX(0deg) rotateY(0deg); }
-        25% { transform: translateY(-20px) rotateX(5deg) rotateY(5deg); }
-        50% { transform: translateY(-10px) rotateX(-5deg) rotateY(-5deg); }
-        75% { transform: translateY(-25px) rotateX(3deg) rotateY(-3deg); }
-    }
-    
-    /* 3D Floating Car */
-    .hero-3d-car {
-        position: absolute;
-        right: 5%;
-        top: 50%;
-        transform: translateY(-50%);
-        width: 600px;
-        height: 300px;
-        perspective: 1000px;
-        animation: carFloat 4s ease-in-out infinite;
-    }
-    .hero-3d-car-inner {
-        width: 100%;
-        height: 100%;
-        transform-style: preserve-3d;
-        animation: carRotate 8s ease-in-out infinite;
-    }
-    @keyframes carFloat {
-        0%, 100% { transform: translateY(-50%) translateX(0); }
-        50% { transform: translateY(-52%) translateX(10px); }
-    }
-    @keyframes carRotate {
-        0%, 100% { transform: rotateY(-5deg); }
-        50% { transform: rotateY(5deg); }
-    }
-    .hero-3d-car img {
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-        filter: drop-shadow(0 20px 40px rgba(0,0,0,0.4)) drop-shadow(0 0 60px rgba(79,142,247,0.2));
+        0%, 100% { transform: translate(0, 0) scale(1); }
+        25% { transform: translate(20px, -30px) scale(1.05); }
+        50% { transform: translate(-10px, -20px) scale(0.95); }
+        75% { transform: translate(30px, -10px) scale(1.02); }
     }
     
     /* 3D Depth Lines */
-    .depth-lines { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+    .depth-lines { position: absolute; inset: 0; overflow: hidden; pointer-events: none; opacity: 0.5; }
     .depth-line {
         position: absolute;
         height: 1px;
         background: linear-gradient(90deg, transparent, var(--accent), transparent);
-        opacity: 0.1;
-        animation: lineMove 10s linear infinite;
+        animation: lineMove 8s linear infinite;
     }
-    .depth-line:nth-child(1) { top: 20%; width: 60%; left: -10%; animation-delay: 0s; }
-    .depth-line:nth-child(2) { top: 35%; width: 40%; right: -5%; left: auto; animation-delay: 2s; }
-    .depth-line:nth-child(3) { top: 50%; width: 50%; left: -15%; animation-delay: 4s; }
-    .depth-line:nth-child(4) { top: 65%; width: 35%; right: -10%; left: auto; animation-delay: 6s; }
-    .depth-line:nth-child(5) { top: 80%; width: 45%; left: -5%; animation-delay: 8s; }
+    .depth-line:nth-child(1) { top: 15%; width: 80%; left: -20%; animation-delay: 0s; }
+    .depth-line:nth-child(2) { top: 30%; width: 60%; right: -15%; left: auto; animation-delay: 1.5s; }
+    .depth-line:nth-child(3) { top: 45%; width: 70%; left: -25%; animation-delay: 3s; }
+    .depth-line:nth-child(4) { top: 60%; width: 50%; right: -10%; left: auto; animation-delay: 4.5s; }
+    .depth-line:nth-child(5) { top: 75%; width: 65%; left: -15%; animation-delay: 6s; }
+    .depth-line:nth-child(6) { top: 90%; width: 55%; right: -5%; left: auto; animation-delay: 7.5s; }
     @keyframes lineMove {
         0% { transform: translateX(-100%); opacity: 0; }
-        10% { opacity: 0.15; }
-        90% { opacity: 0.15; }
+        10% { opacity: 1; }
+        90% { opacity: 1; }
         100% { transform: translateX(200%); opacity: 0; }
+    }
+    
+    /* 3D Glow Orbs */
+    .glow-orb {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(80px);
+        animation: orbPulse 6s ease-in-out infinite;
+    }
+    .glow-orb:nth-child(1) { width: 500px; height: 500px; background: rgba(79, 142, 247, 0.15); top: -100px; right: -100px; animation-delay: 0s; }
+    .glow-orb:nth-child(2) { width: 400px; height: 400px; background: rgba(139, 92, 246, 0.1); bottom: -50px; left: -100px; animation-delay: 2s; }
+    .glow-orb:nth-child(3) { width: 300px; height: 300px; background: rgba(34, 197, 94, 0.08); top: 50%; left: 50%; animation-delay: 4s; }
+    @keyframes orbPulse {
+        0%, 100% { transform: scale(1); opacity: 0.5; }
+        50% { transform: scale(1.2); opacity: 0.8; }
     }
     
     /* 3D Text Effect */
     .hero-3d-text {
-        animation: textFloat 3s ease-in-out infinite;
+        animation: textFloat 4s ease-in-out infinite;
+        transform-style: preserve-3d;
     }
     @keyframes textFloat {
-        0%, 100% { transform: translateZ(0); }
-        50% { transform: translateZ(10px); }
+        0%, 100% { transform: translateY(0) rotateX(0deg); }
+        50% { transform: translateY(-10px) rotateX(2deg); }
     }
     .hero-badge { display: inline-flex; align-items: center; gap: 8px; background: var(--gold-dim); border: 1px solid rgba(201,168,76,0.3); color: var(--gold); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; padding: 7px 16px; border-radius: 20px; margin-bottom: 28px; animation: fadeInUp 0.6s ease both; }
     .hero-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--gold); animation: blink 2s ease infinite; }
@@ -548,7 +533,13 @@ $cars_json = json_encode($chatbot_cars);
     <section class="hero">
         <!-- Parallax Background -->
         <div class="parallax-bg">
+            <!-- 3D Glow Orbs -->
+            <div class="glow-orb"></div>
+            <div class="glow-orb"></div>
+            <div class="glow-orb"></div>
+            
             <!-- 3D Floating Particles -->
+            <div class="particle"></div>
             <div class="particle"></div>
             <div class="particle"></div>
             <div class="particle"></div>
@@ -562,13 +553,7 @@ $cars_json = json_encode($chatbot_cars);
                 <div class="depth-line"></div>
                 <div class="depth-line"></div>
                 <div class="depth-line"></div>
-            </div>
-        </div>
-        
-        <!-- 3D Animated Car -->
-        <div class="hero-3d-car">
-            <div class="hero-3d-car-inner">
-                <img src="https://images.unsplash.com/photo-1503376780353-7e6692767b70?w=800&q=80" alt="Premium Car" onerror="this.style.display='none'">
+                <div class="depth-line"></div>
             </div>
         </div>
         
@@ -986,32 +971,28 @@ $cars_json = json_encode($chatbot_cars);
     // Parallax Scroll Effect
     window.addEventListener('scroll', function() {
         var scrolled = window.pageYOffset;
-        var hero = document.querySelector('.hero');
         var parallaxBg = document.querySelector('.parallax-bg');
-        var parallaxLayer1 = document.querySelector('.parallax-layer.layer-1');
-        var parallaxLayer2 = document.querySelector('.parallax-layer.layer-2');
-        var hero3dCar = document.querySelector('.hero-3d-car');
+        var glowOrbs = document.querySelectorAll('.glow-orb');
         var heroContent = document.querySelector('.hero-content');
         
         if (parallaxBg) {
-            parallaxBg.style.transform = 'translateY(' + (scrolled * 0.3) + 'px)';
+            parallaxBg.style.transform = 'translateY(' + (scrolled * 0.4) + 'px)';
         }
-        if (parallaxLayer1) {
-            parallaxLayer1.style.transform = 'translateY(' + (scrolled * 0.2) + 'px) translateZ(-100px) scale(1.2)';
+        
+        if (glowOrbs) {
+            glowOrbs.forEach(function(orb, i) {
+                var speed = 0.2 + (i * 0.1);
+                orb.style.transform = 'translateY(' + (scrolled * speed) + 'px) scale(' + (1 + scrolled * 0.0005) + ')';
+            });
         }
-        if (parallaxLayer2) {
-            parallaxLayer2.style.transform = 'translateY(' + (scrolled * 0.4) + 'px) translateZ(-200px) scale(1.4)';
-        }
-        if (hero3dCar) {
-            hero3dCar.style.transform = 'translateY(' + (-50 + scrolled * 0.1) + '%) translateX(' + (scrolled * 0.05) + 'px)';
-        }
+        
         if (heroContent && scrolled < 600) {
             heroContent.style.transform = 'translateY(' + (scrolled * 0.3) + 'px)';
             heroContent.style.opacity = 1 - (scrolled / 600);
         }
     });
     
-    // Mouse parallax effect on hero
+    // Smooth mouse parallax effect on hero
     document.querySelector('.hero').addEventListener('mousemove', function(e) {
         var rect = this.getBoundingClientRect();
         var x = (e.clientX - rect.left) / rect.width - 0.5;
@@ -1019,14 +1000,26 @@ $cars_json = json_encode($chatbot_cars);
         
         var particles = document.querySelectorAll('.particle');
         particles.forEach(function(p, i) {
-            var speed = (i + 1) * 10;
-            p.style.transform = 'translate(' + (x * speed) + 'px, ' + (y * speed) + 'px)';
+            var speed = 20 + (i * 15);
+            var direction = i % 2 === 0 ? 1 : -1;
+            p.style.transform = 'translate(' + (x * speed * direction) + 'px, ' + (y * speed) + 'px)';
         });
         
-        var hero3dCar = document.querySelector('.hero-3d-car');
-        if (hero3dCar) {
-            hero3dCar.style.transform = 'translateY(-50%) perspective(1000px) rotateY(' + (x * 5) + 'deg) rotateX(' + (-y * 5) + 'deg)';
-        }
+        var glowOrbs = document.querySelectorAll('.glow-orb');
+        glowOrbs.forEach(function(orb, i) {
+            var speed = 10 + (i * 5);
+            orb.style.transform = 'translate(' + (x * speed) + 'px, ' + (y * speed) + 'px)';
+        });
+    });
+    
+    // Reset on mouse leave
+    document.querySelector('.hero').addEventListener('mouseleave', function() {
+        var particles = document.querySelectorAll('.particle');
+        particles.forEach(function(p) {
+            p.style.transition = 'transform 0.5s ease-out';
+            p.style.transform = 'translate(0, 0)';
+            setTimeout(function() { p.style.transition = ''; }, 500);
+        });
     });
 </script>
 
