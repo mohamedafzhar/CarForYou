@@ -15,6 +15,74 @@ if (isset($_SESSION['alogin'])) {
     header('Location: admin_dashboard.php'); exit();
 }
 
+// ── 2FA VERIFICATION ────────────────────────────────────────
+if (isset($_SESSION['2fa_pending'])) {
+    $show_2fa = true;
+    $pending_user = $_SESSION['2fa_pending'];
+    
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['verify_2fa'])) {
+        $code = trim($_POST['2fa_code'] ?? '');
+        
+        if (empty($_SESSION['2fa_code']) || $code !== $_SESSION['2fa_code']) {
+            $error = "Invalid verification code. Please try again.";
+        } elseif (strtotime($_SESSION['2fa_expires']) < time()) {
+            $error = "Verification code expired. Please login again.";
+            unset($_SESSION['2fa_pending'], $_SESSION['2fa_code'], $_SESSION['2fa_expires']);
+            $show_2fa = false;
+        } else {
+            // 2FA successful
+            session_regenerate_id(true);
+            $_SESSION['alogin'] = $pending_user['username'];
+            $_SESSION['admin_id'] = $pending_user['id'];
+            unset($_SESSION['2fa_pending'], $_SESSION['2fa_code'], $_SESSION['2fa_expires']);
+            header('Location: admin_dashboard.php'); exit();
+        }
+    }
+    
+    if (!isset($_SESSION['2fa_code']) && isset($pending_user)) {
+        // Generate new 2FA code
+        $code = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $_SESSION['2fa_code'] = $code;
+        $_SESSION['2fa_expires'] = date('Y-m-d H:i:s', strtotime('+5 minutes'));
+        
+        // Send code via email
+        $stmt = $conn->prepare("SELECT email FROM admin WHERE username = ?");
+        $stmt->bind_param("s", $pending_user['username']);
+        $stmt->execute();
+        $admin_email = $stmt->get_result()->fetch_assoc()['email'] ?? '';
+        
+        if ($admin_email) {
+            $mail = new PHPMailer(true);
+            try {
+                $mail->isSMTP();
+                $mail->Host       = getenv('SMTP_HOST') ?: 'smtp-relay.brevo.com';
+                $mail->SMTPAuth   = true;
+                $mail->Username   = getenv('SMTP_USERNAME') ?: '';
+                $mail->Password   = getenv('SMTP_PASSWORD') ?: '';
+                $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+                $mail->Port       = (int)(getenv('SMTP_PORT') ?: 587);
+                $mail->setFrom(getenv('MAIL_FROM') ?: 'noreply@carforyou.com', 'CarForYou Admin');
+                $mail->addAddress($admin_email);
+                $mail->isHTML(true);
+                $mail->Subject = 'CarForYou Admin - Verification Code';
+                $mail->Body = "
+                    <div style='font-family:sans-serif;max-width:400px;margin:auto;padding:30px;background:#1e2738;color:#e8edf5;border-radius:12px;'>
+                        <h2 style='margin:0 0 20px;'>Verification Code</h2>
+                        <p style='margin:0 0 20px;'>Your verification code is:</p>
+                        <div style='font-size:32px;font-weight:bold;letter-spacing:8px;color:#4f8ef7;text-align:center;padding:20px;background:#0d1117;border-radius:8px;margin:20px 0;'>$code</div>
+                        <p style='margin:0;font-size:12px;color:#7a93b0;'>This code expires in 5 minutes. If you didn't request this, please ignore this email.</p>
+                    </div>";
+                $mail->send();
+                $msg = "Verification code sent to your email.";
+            } catch (Exception $e) {
+                $error = "Failed to send verification code.";
+            }
+        }
+    }
+} else {
+    $show_2fa = false;
+}
+
 // ── CSRF TOKEN ────────────────────────────────────────────────
 if (empty($_SESSION['admin_csrf'])) {
     $_SESSION['admin_csrf'] = bin2hex(random_bytes(32));
@@ -139,21 +207,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
 
             $valid = false;
             if ($admin) {
-                if (strlen($admin['password']) === 32) {
-                    if (md5($password) === $admin['password']) {
-                        $valid   = true;
-                        $newHash = password_hash($password, PASSWORD_BCRYPT);
-                        $upd     = $conn->prepare("UPDATE admin SET password = ? WHERE id = ?");
-                        $upd->bind_param("si", $newHash, $admin['id']);
-                        $upd->execute();
-                        $upd->close();
-                    }
-                } else {
-                    $valid = password_verify($password, $admin['password']);
-                }
+                $valid = password_verify($password, $admin['password']);
             }
 
             if ($valid) {
+                // Password verified - now require 2FA
                 $log = $conn->prepare("INSERT INTO admin_login_attempts (username, ip_address, success, attempted_at) VALUES (?, ?, 1, NOW())");
                 $log->bind_param("ss", $username, $ip);
                 $log->execute();
@@ -166,11 +224,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
                 $upd->bind_param("i", $admin['id']);
                 $upd->execute();
 
-                session_regenerate_id(true);
-                $_SESSION['alogin']   = $admin['username'];
-                $_SESSION['admin_id'] = $admin['id'];
-
-                header('Location: admin_dashboard.php'); exit();
+                // Set 2FA pending session
+                $_SESSION['2fa_pending'] = ['id' => $admin['id'], 'username' => $admin['username']];
+                header('Location: index.php'); exit();
 
             } else {
                 $log = $conn->prepare("INSERT INTO admin_login_attempts (username, ip_address, success, attempted_at) VALUES (?, ?, 0, NOW())");
@@ -301,6 +357,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
 
         <div class="divider"></div>
 
+        <?php if (isset($show_2fa) && $show_2fa): ?>
+        <!-- 2FA Verification Form -->
+        <div class="brand" style="margin-bottom:20px;">
+            <div style="width:60px;height:60px;background:rgba(79,142,247,0.15);border:2px solid rgba(79,142,247,0.3);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">
+                <i class="fa fa-shield-halved" style="font-size:1.5rem;color:#4f8ef7;"></i>
+            </div>
+            <h2 style="font-family:'Syne',sans-serif;font-size:1.2rem;font-weight:700;">Two-Factor Authentication</h2>
+            <p style="color:var(--text2);margin-top:8px;font-size:0.85rem;">Enter the 6-digit code sent to your email</p>
+        </div>
+        
+        <?php if ($error): ?>
+        <div class="alert alert-error"><i class="fa fa-circle-xmark"></i> <?php echo htmlspecialchars($error); ?></div>
+        <?php endif; ?>
+        <?php if ($msg): ?>
+        <div class="alert alert-success"><i class="fa fa-circle-check"></i> <?php echo htmlspecialchars($msg); ?></div>
+        <?php endif; ?>
+        
+        <form method="POST" autocomplete="off">
+            <div class="form-group" style="text-align:center;">
+                <label>Verification Code</label>
+                <div class="input-wrap" style="max-width:220px;margin:0 auto;">
+                    <input type="text" name="2fa_code" class="form-control" 
+                           placeholder="000000" maxlength="6" required 
+                           autocomplete="one-time-code" style="text-align:center;font-size:1.5rem;letter-spacing:8px;font-weight:700;"
+                           oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0,6)">
+                </div>
+                <p style="font-size:0.72rem;color:var(--text3);margin-top:8px;">Code expires in 5 minutes</p>
+            </div>
+            <button type="submit" name="verify_2fa" class="btn-login">
+                <i class="fa fa-check"></i> Verify Code
+            </button>
+        </form>
+        
+        <div class="forgot-wrap" style="margin-top:16px;">
+            <form method="POST" style="display:inline;">
+                <button type="submit" name="resend_2fa" class="forgot-link" style="background:none;border:none;color:var(--text3);cursor:pointer;font-family:'DM Sans',sans-serif;">
+                    <i class="fa fa-redo"></i> Resend Code
+                </button>
+            </form>
+            <span style="color:var(--text3);margin:0 10px;">|</span>
+            <a href="index.php" class="forgot-link" style="color:var(--text3);">
+                <i class="fa fa-arrow-left"></i> Back to Login
+            </a>
+        </div>
+        
+        <?php else: ?>
+        
         <?php if ($error && !isset($_POST['forgot_password'])): ?>
         <div class="alert alert-error"><i class="fa fa-circle-xmark"></i> <?php echo htmlspecialchars($error); ?></div>
         <?php endif; ?>
@@ -327,7 +430,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
                 </div>
             </div>
             <button type="submit" name="login" class="btn-login">
-                <i class="fa fa-arrow-right-to-bracket"></i> Sign In to Dashboard
+                <i class="fa fa-shield-halved"></i> Sign In (2FA Protected)
             </button>
         </form>
 
@@ -338,6 +441,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
         </div>
 
         <div class="login-footer">Secure admin area — unauthorised access is prohibited</div>
+        <?php endif; ?>
     </div>
 </div>
 

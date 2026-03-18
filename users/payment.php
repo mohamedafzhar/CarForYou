@@ -58,16 +58,65 @@ $amount  = $days * $booking['price_per_day'];
 $penalty = intval($booking['penalty_amount'] ?? 0);
 $total   = $amount + $penalty;
 
+// ── RATE LIMITING ──────────────────────────────────────────
+function check_payment_attempts($conn, $user_email) {
+    $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $window = date('Y-m-d H:i:s', strtotime('-15 minutes'));
+    
+    // Check by IP
+    $stmt = $conn->prepare("SELECT COUNT(*) as attempts FROM payment_attempts WHERE ip_address = ? AND attempted_at > ?");
+    $stmt->bind_param("ss", $ip, $window);
+    $stmt->execute();
+    $ip_attempts = $stmt->get_result()->fetch_assoc()['attempts'];
+    
+    // Check by user
+    $stmt = $conn->prepare("SELECT COUNT(*) as attempts FROM payment_attempts WHERE user_email = ? AND attempted_at > ?");
+    $stmt->bind_param("ss", $user_email, $window);
+    $stmt->execute();
+    $user_attempts = $stmt->get_result()->fetch_assoc()['attempts'];
+    
+    $stmt->close();
+    
+    $max_attempts = 3;
+    if ($ip_attempts >= $max_attempts || $user_attempts >= $max_attempts) {
+        return false;
+    }
+    return true;
+}
+
+function record_payment_attempt($conn, $user_email, $success) {
+    $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $stmt = $conn->prepare("INSERT INTO payment_attempts (ip_address, user_email, success, attempted_at) VALUES (?, ?, ?, NOW())");
+    $stmt->bind_param("ssi", $ip, $user_email, $success);
+    $stmt->execute();
+    $stmt->close();
+}
+
+// Create payment_attempts table if not exists
+$conn->query("CREATE TABLE IF NOT EXISTS payment_attempts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    ip_address VARCHAR(45) NOT NULL,
+    user_email VARCHAR(150) NOT NULL,
+    success TINYINT DEFAULT 0,
+    attempted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_ip (ip_address),
+    INDEX idx_email (user_email)
+)");
+
 // ── PROCESS PAYMENT ──────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['process_payment'])) {
-    try {
-        verify_csrf($_POST['csrf_token'] ?? '');
-        
-        $card_name    = trim($_POST['card_name'] ?? '');
-        $card_number  = preg_replace('/\s+/', '', $_POST['card_number'] ?? '');
-        $expiry_month = trim($_POST['expiry_month'] ?? '');
-        $expiry_year  = trim($_POST['expiry_year'] ?? '');
-        $cvv          = trim($_POST['cvv'] ?? '');
+    // Check rate limit
+    if (!check_payment_attempts($conn, $user_email)) {
+        $error = "Too many payment attempts. Please wait 15 minutes before trying again.";
+    } else {
+        try {
+            verify_csrf($_POST['csrf_token'] ?? '');
+            
+            $card_name    = trim($_POST['card_name'] ?? '');
+            $card_number  = preg_replace('/\s+/', '', $_POST['card_number'] ?? '');
+            $expiry_month = trim($_POST['expiry_month'] ?? '');
+            $expiry_year  = trim($_POST['expiry_year'] ?? '');
+            $cvv          = trim($_POST['cvv'] ?? '');
         
         // Validate card fields
         if (empty($card_name) || strlen($card_name) < 3) {
@@ -134,6 +183,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['process_payment'])) {
             $stmt->execute();
             
             $conn->commit();
+            record_payment_attempt($conn, $user_email, 1);
             
             $_SESSION['success_msg'] = "Payment successful! Receipt: $receipt_no";
             header("Location: payment_success.php?receipt=$receipt_no&booking_id=$booking_id");
@@ -141,10 +191,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['process_payment'])) {
             
         } catch (Exception $e) {
             $conn->rollback();
+            record_payment_attempt($conn, $user_email, 0);
             throw new Exception("Payment processing failed. Please try again.");
         }
         
     } catch (Exception $e) {
+        record_payment_attempt($conn, $user_email, 0);
         $error = $e->getMessage();
     }
 }
