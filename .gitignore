@@ -1,0 +1,26 @@
+# Environment files (contain secrets)
+.env
+.env.local
+.env.production
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Composer
+/vendor/
+
+# Node modules (if any)
+/node_modules/
+.env

@@ -507,7 +507,6 @@ $booked_ranges_json = json_encode($booked_ranges);
         <li><a href="booking.php" class="active"><i class="fa fa-car"></i> Book a Car</a></li>
         <li><a href="user_booking.php"><i class="fa fa-calendar-check"></i> My Bookings</a></li>
         <li><a href="profile.php"><i class="fa fa-user"></i> Profile</a></li>
-        <li><a href="change_password.php"><i class="fa fa-key"></i> Change Password</a></li>
         <li class="sb-divider"></li>
         <li><a href="../index.php"><i class="fa fa-arrow-left"></i> Back to Site</a></li>
         <li><a href="logout.php" class="logout"><i class="fa fa-arrow-right-from-bracket"></i> Logout</a></li>
