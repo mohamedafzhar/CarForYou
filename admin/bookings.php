@@ -1,36 +1,18 @@
 <?php
 session_start();
 include 'config.php';
-
-if (!isset($_SESSION['alogin']) || empty($_SESSION['alogin'])) {
-    header('Location: index.php');
-    exit();
-}
+adminAuth();
 
 $msg   = "";
 $error = "";
 
-// ── Helper: build & send confirmation email ───────────────────────────────────
-function sendConfirmationEmail($conn, int $booking_id): bool {
-
-    // Fetch full booking + user + car details
+// ── Helper: send advance payment request email ─────────────────────────────────
+function sendAdvancePaymentEmail($conn, int $booking_id): bool {
     $stmt = $conn->prepare("
-        SELECT
-            b.id          AS booking_id,
-            b.from_date,
-            b.to_date,
-            b.message     AS special_req,
-            b.posting_date,
-            u.full_name,
-            u.email,
-            c.car_name,
-            c.car_model,
-            c.car_type,
-            c.price_per_day,
-            c.seating_capacity
+        SELECT b.*, u.full_name, u.email, c.car_name, c.car_model, c.car_type, c.price_per_day
         FROM booking b
         JOIN users u ON u.email = b.user_email
-        JOIN cars  c ON c.id    = b.car_id
+        JOIN cars c ON c.id = b.car_id
         WHERE b.id = ?
     ");
     $stmt->bind_param("i", $booking_id);
@@ -38,87 +20,71 @@ function sendConfirmationEmail($conn, int $booking_id): bool {
     $d = $stmt->get_result()->fetch_assoc();
     if (!$d) return false;
 
-    // Calculate days & total
-    $from  = new DateTime($d['from_date']);
-    $to    = new DateTime($d['to_date']);
-    $days  = max(1, (int)$from->diff($to)->days);
+    $days = max(1, (int)(new DateTime($d['from_date']))->diff(new DateTime($d['to_date']))->days);
     $total = $days * intval($d['price_per_day']);
+    $advance = 10000;
 
-    $car_label = htmlspecialchars($d['car_name']);
-    $from_fmt  = date('d M Y', strtotime($d['from_date']));
-    $to_fmt    = date('d M Y', strtotime($d['to_date']));
-    $booked_on = date('d M Y, h:i A', strtotime($d['posting_date']));
-    $price_fmt = 'LKR ' . number_format($d['price_per_day']);
-    $total_fmt = 'LKR ' . number_format($total);
-
-    // ── HTML Email Template (Email-client friendly) ────────────────────────────────
     $html = <<<HTML
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Booking Confirmation - CarForYou</title>
+<title>Booking Approved - Advance Payment Required | CarForYou</title>
 </head>
-<body style="margin:0;padding:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;padding:30px 15px;">
+<body style="margin:0;padding:0;background:#0d1117;font-family:'Segoe UI',Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1117;padding:40px 20px;">
   <tr>
     <td align="center">
-      <table width="580" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
-
-        <!-- HEADER -->
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
         <tr>
-          <td style="background:#1a56db;padding:30px 40px;text-align:center;">
-            <h1 style="margin:0;font-size:24px;font-weight:bold;color:#ffffff;">CarForYou</h1>
-            <p style="margin:8px 0 0;font-size:13px;color:rgba(255,255,255,0.8);">Car Rental Service - Sri Lanka</p>
+          <td style="background:linear-gradient(135deg,#0d1117 0%,#111b2a 60%);border-radius:16px 16px 0 0;padding:40px 40px 32px;text-align:center;border:1px solid rgba(79,142,247,0.15);border-bottom:none;">
+            <h1 style="margin:0;font-size:2rem;font-weight:300;color:#e8edf5;letter-spacing:-0.02em;">Car<span style="color:#4f8ef7;font-style:italic;font-weight:600;">ForYou</span></h1>
           </td>
         </tr>
-
-        <!-- CONFIRMATION -->
         <tr>
-          <td style="padding:30px 40px;text-align:center;border-bottom:1px solid #e5e7eb;">
-            <div style="display:inline-block;background:#dcfce7;color:#16a34a;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:bold;margin-bottom:16px;">CONFIRMED</div>
-            <h2 style="margin:0 0 8px;font-size:20px;color:#1f2937;">Hi {$d['full_name']},</h2>
-            <p style="margin:0;font-size:14px;color:#6b7280;">Your booking is confirmed! Please complete payment to secure your reservation.</p>
+          <td style="background:#1e2738;border-left:1px solid rgba(79,142,247,0.15);border-right:1px solid rgba(79,142,247,0.15);padding:32px 40px;text-align:center;">
+            <span style="display:inline-flex;align-items:center;gap:8px;background:rgba(79,142,247,0.12);border:1px solid rgba(79,142,247,0.3);border-radius:30px;padding:8px 20px;font-size:0.82rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#4f8ef7;margin-bottom:16px;">
+              ✓ &nbsp; Booking Approved
+            </span>
+            <p style="margin:0;font-size:1rem;color:#e8edf5;">Hi <strong style="color:#4f8ef7;">{$d['full_name']}</strong>,</p>
+            <p style="margin:16px 0 0;font-size:0.9rem;color:#7a93b0;">Great news! Your booking for <strong style="color:#e8edf5;">{$d['car_name']}</strong> has been approved by our team.</p>
           </td>
         </tr>
-
-        <!-- BOOKING DETAILS -->
         <tr>
-          <td style="padding:30px 40px;">
-            <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">
+          <td style="background:#131c2e;border-left:1px solid rgba(79,142,247,0.15);border-right:1px solid rgba(79,142,247,0.15);padding:24px 40px;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:#1e2738;border-radius:12px;overflow:hidden;border:1px solid rgba(79,142,247,0.1);">
               <tr>
-                <td colspan="2" style="padding:16px 20px;border-bottom:1px solid #e5e7eb;">
-                  <strong style="font-size:14px;color:#374151;">{$car_label}</strong><br>
-                  <span style="font-size:12px;color:#9ca3af;">{$d['car_model']} | {$d['car_type']}</span>
+                <td colspan="2" style="padding:16px 20px;border-bottom:1px solid rgba(79,142,247,0.1);">
+                  <strong style="font-size:16px;color:#e8edf5;">{$d['car_name']}</strong><br>
+                  <span style="font-size:13px;color:#7a93b0;">{$d['car_model']} | {$d['car_type']}</span>
                 </td>
               </tr>
               <tr>
-                <td style="padding:12px 20px;border-bottom:1px solid #e5e7eb;width:50%;">
-                  <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;margin-bottom:4px;">Pick-up Date</div>
-                  <strong style="font-size:13px;color:#374151;">{$from_fmt}</strong>
+                <td style="padding:12px 20px;border-bottom:1px solid rgba(79,142,247,0.1);width:50%;">
+                  <div style="font-size:11px;color:#7a93b0;text-transform:uppercase;margin-bottom:4px;">Pick-up</div>
+                  <strong style="font-size:14px;color:#e8edf5;">{$d['from_date']}</strong>
                 </td>
-                <td style="padding:12px 20px;border-bottom:1px solid #e5e7eb;width:50%;">
-                  <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;margin-bottom:4px;">Return Date</div>
-                  <strong style="font-size:13px;color:#374151;">{$to_fmt}</strong>
-                </td>
-              </tr>
-              <tr>
-                <td style="padding:12px 20px;border-bottom:1px solid #e5e7eb;">
-                  <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;margin-bottom:4px;">Duration</div>
-                  <strong style="font-size:13px;color:#374151;">{$days} day(s)</strong>
-                </td>
-                <td style="padding:12px 20px;border-bottom:1px solid #e5e7eb;">
-                  <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;margin-bottom:4px;">Booking Ref</div>
-                  <strong style="font-size:13px;color:#1a56db;">#BKG-{$booking_id}</strong>
+                <td style="padding:12px 20px;border-bottom:1px solid rgba(79,142,247,0.1);width:50%;">
+                  <div style="font-size:11px;color:#7a93b0;text-transform:uppercase;margin-bottom:4px;">Return</div>
+                  <strong style="font-size:14px;color:#e8edf5;">{$d['to_date']}</strong>
                 </td>
               </tr>
               <tr>
-                <td colspan="2" style="padding:16px 20px;background:#1a56db;">
+                <td style="padding:12px 20px;border-bottom:1px solid rgba(79,142,247,0.1);">
+                  <div style="font-size:11px;color:#7a93b0;text-transform:uppercase;margin-bottom:4px;">Duration</div>
+                  <strong style="font-size:14px;color:#e8edf5;">{$days} day(s)</strong>
+                </td>
+                <td style="padding:12px 20px;border-bottom:1px solid rgba(79,142,247,0.1);">
+                  <div style="font-size:11px;color:#7a93b0;text-transform:uppercase;margin-bottom:4px;">Booking Ref</div>
+                  <strong style="font-size:14px;color:#4f8ef7;">#BKG-{$booking_id}</strong>
+                </td>
+              </tr>
+              <tr>
+                <td colspan="2" style="padding:16px 20px;background:linear-gradient(135deg,rgba(79,142,247,0.15),rgba(79,142,247,0.05));">
                   <table width="100%">
                     <tr>
-                      <td style="font-size:14px;color:#ffffff;">Estimated Total</td>
-                      <td style="font-size:18px;font-weight:bold;color:#ffffff;text-align:right;">{$total_fmt}</td>
+                      <td style="font-size:14px;color:#e8edf5;">Total Amount</td>
+                      <td style="font-size:16px;font-weight:bold;color:#e8edf5;text-align:right;">LKR {$total}</td>
                     </tr>
                   </table>
                 </td>
@@ -126,28 +92,24 @@ function sendConfirmationEmail($conn, int $booking_id): bool {
             </table>
           </td>
         </tr>
-
-        <!-- PAYMENT CTA -->
         <tr>
-          <td style="padding:0 40px 30px;">
-            <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:20px;text-align:center;">
-              <p style="margin:0 0 16px;font-size:14px;color:#92400e;">Please complete your payment to confirm the booking.</p>
-              <a href="http://{$_SERVER['HTTP_HOST']}/carrental/users/payment.php?booking_id={$booking_id}" style="display:inline-block;background:#1a56db;color:#ffffff;padding:14px 32px;border-radius:8px;font-size:14px;font-weight:bold;text-decoration:none;">Pay Now</a>
+          <td style="background:#131c2e;border-left:1px solid rgba(79,142,247,0.15);border-right:1px solid rgba(79,142,247,0.15);padding:24px 40px;text-align:center;">
+            <div style="background:linear-gradient(135deg,rgba(251,191,36,0.15),rgba(251,191,36,0.05));border:1px solid rgba(251,191,36,0.3);border-radius:12px;padding:24px;margin-bottom:20px;">
+              <p style="margin:0 0 12px;font-size:1rem;color:#fbbf24;font-weight:700;">⚡ Advance Payment Required</p>
+              <p style="margin:0 0 16px;font-size:0.9rem;color:#7a93b0;">To confirm your booking, please pay an advance of:</p>
+              <p style="margin:0;font-size:2rem;font-weight:800;color:#fbbf24;">LKR 10,000</p>
+              <p style="margin:12px 0 0;font-size:0.8rem;color:#7a93b0;">This will be deducted from your total rental amount.</p>
             </div>
+            <a href="http://{$_SERVER['HTTP_HOST']}/carrental/users/payment.php?booking_id={$booking_id}&type=advance" style="display:inline-block;background:linear-gradient(135deg,#4f8ef7,#7db0fb);color:#ffffff;padding:16px 40px;border-radius:10px;font-size:1rem;font-weight:700;text-decoration:none;box-shadow:0 4px 20px rgba(79,142,247,0.3);">Pay Advance Now</a>
+            <p style="margin:16px 0 0;font-size:0.8rem;color:#3d5570;">⏰ Please complete payment within <strong style="color:#fbbf24;">2 hours</strong> to confirm your booking.</p>
           </td>
         </tr>
-
-        <!-- FOOTER -->
         <tr>
-          <td style="background:#f9fafb;padding:24px 40px;text-align:center;border-top:1px solid #e5e7eb;">
-            <p style="margin:0 0 8px;font-size:13px;color:#374151;">Need help? Contact us anytime.</p>
-            <p style="margin:0;font-size:12px;color:#9ca3af;">
-              Email: bookings@carforyou.com | Phone: +94 75 45 57 624<br>
-              <span style="margin-top:8px;display:block;">CarForYou - Trincomalee, Sri Lanka</span>
-            </p>
+          <td style="background:#131920;border:1px solid rgba(79,142,247,0.15);border-top:none;border-radius:0 0 16px 16px;padding:24px 40px;text-align:center;">
+            <p style="margin:0 0 8px;font-size:0.85rem;color:#7a93b0;">Questions? Contact us anytime.</p>
+            <p style="margin:0;font-size:0.8rem;color:#3d5570;">Email: amafzhar@gmail.com | Phone: +94 75 45 57 624</p>
           </td>
         </tr>
-
       </table>
     </td>
   </tr>
@@ -156,58 +118,147 @@ function sendConfirmationEmail($conn, int $booking_id): bool {
 </html>
 HTML;
 
-    // ── Send via PHPMailer (SMTP) ─────────────────────────────────────────────
     require_once __DIR__ . '/mailer_config.php';
     try {
         $mail = getMailer();
         $mail->addAddress($d['email'], $d['full_name']);
-        $mail->addReplyTo(MAIL_FROM, MAIL_FROM_NAME);
         $mail->isHTML(true);
-        $mail->Subject = "Booking Confirmed — {$car_label} | CarForYou #BKG-{$booking_id}";
-        $mail->Body    = $html;
-        $mail->AltBody = "Hi {$d['full_name']}, your booking for {$car_label} has been confirmed!\n\n"
-                       . "Booking Ref: #BKG-{$booking_id}\n"
-                       . "Pick-up:     {$from_fmt}\n"
-                       . "Return:      {$to_fmt}\n"
-                       . "Duration:    {$days} day(s)\n"
-                       . "Est. Total:  {$total_fmt}\n\n"
-                       . "Contact us: " . MAIL_FROM . " | +94 75 45 57 624";
+        $mail->Subject = "Booking Approved — Pay LKR 10,000 Advance | CarForYou #BKG-{$booking_id}";
+        $mail->Body = $html;
+        $mail->AltBody = "Hi {$d['full_name']}, your booking for {$d['car_name']} has been approved! Please pay LKR 10,000 advance within 2 hours to confirm. Payment link: http://{$_SERVER['HTTP_HOST']}/carrental/users/payment.php?booking_id={$booking_id}&type=advance";
         $mail->send();
         return true;
     } catch (\Throwable $e) {
-        error_log('CarForYou mailer error: ' . $e->getMessage());
+        error_log('Advance payment email error: ' . $e->getMessage());
         return false;
     }
 }
 
-// ── AUTO-CANCEL UNPAID BOOKINGS (older than 12 hours) ─────────────────────────
-function autoCancelUnpaidBookings($conn) {
+// ── Helper: send final confirmation email ────────────────────────────────────
+function sendFinalConfirmationEmail($conn, int $booking_id): bool {
     $stmt = $conn->prepare("
-        SELECT b.id, b.user_email, b.from_date, c.car_name, u.full_name, u.email
+        SELECT b.*, u.full_name, u.email, c.car_name, c.car_model, c.car_type, c.price_per_day
         FROM booking b
-        JOIN cars c ON c.id = b.car_id
         JOIN users u ON u.email = b.user_email
-        WHERE b.status = 1 
-        AND b.payment_status = 'unpaid' 
-        AND b.posting_date < DATE_SUB(NOW(), INTERVAL 12 HOUR)
+        JOIN cars c ON c.id = b.car_id
+        WHERE b.id = ?
     ");
+    $stmt->bind_param("i", $booking_id);
     $stmt->execute();
-    $bookings = $stmt->get_result();
-    $stmt->close();
-    
-    $cancelled = 0;
-    while ($booking = $bookings->fetch_assoc()) {
-        $update = $conn->prepare("UPDATE booking SET status = 2 WHERE id = ?");
-        $update->bind_param("i", $booking['id']);
-        if ($update->execute()) {
-            $cancelled++;
-            sendCancellationEmail($booking);
-        }
-        $update->close();
+    $d = $stmt->get_result()->fetch_assoc();
+    if (!$d) return false;
+
+    $days = max(1, (int)(new DateTime($d['from_date']))->diff(new DateTime($d['to_date']))->days);
+    $total = $days * intval($d['price_per_day']);
+    $balance = $total - 10000;
+
+    $html = <<<HTML
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Booking Confirmed! | CarForYou</title>
+</head>
+<body style="margin:0;padding:0;background:#0d1117;font-family:'Segoe UI',Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1117;padding:40px 20px;">
+  <tr>
+    <td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
+        <tr>
+          <td style="background:linear-gradient(135deg,#0d1117 0%,#111b2a 60%);border-radius:16px 16px 0 0;padding:40px 40px 32px;text-align:center;border:1px solid rgba(79,142,247,0.15);border-bottom:none;">
+            <h1 style="margin:0;font-size:2rem;font-weight:300;color:#e8edf5;letter-spacing:-0.02em;">Car<span style="color:#4f8ef7;font-style:italic;font-weight:600;">ForYou</span></h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#1e2738;border-left:1px solid rgba(79,142,247,0.15);border-right:1px solid rgba(79,142,247,0.15);padding:32px 40px;text-align:center;">
+            <span style="display:inline-flex;align-items:center;gap:8px;background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.3);border-radius:30px;padding:8px 20px;font-size:0.82rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#22c55e;margin-bottom:16px;">
+              ✓ &nbsp; BOOKING CONFIRMED
+            </span>
+            <p style="margin:0;font-size:1rem;color:#e8edf5;">Hi <strong style="color:#4f8ef7;">{$d['full_name']}</strong>,</p>
+            <p style="margin:16px 0 0;font-size:0.9rem;color:#7a93b0;">Your booking is now confirmed! We look forward to serving you.</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#131c2e;border-left:1px solid rgba(79,142,247,0.15);border-right:1px solid rgba(79,142,247,0.15);padding:24px 40px;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:#1e2738;border-radius:12px;overflow:hidden;border:1px solid rgba(79,142,247,0.1);">
+              <tr>
+                <td colspan="2" style="padding:16px 20px;border-bottom:1px solid rgba(79,142,247,0.1);">
+                  <strong style="font-size:16px;color:#e8edf5;">{$d['car_name']}</strong><br>
+                  <span style="font-size:13px;color:#7a93b0;">{$d['car_model']} | {$d['car_type']}</span>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:12px 20px;border-bottom:1px solid rgba(79,142,247,0.1);width:50%;">
+                  <div style="font-size:11px;color:#7a93b0;text-transform:uppercase;margin-bottom:4px;">Pick-up</div>
+                  <strong style="font-size:14px;color:#e8edf5;">{$d['from_date']}</strong>
+                </td>
+                <td style="padding:12px 20px;border-bottom:1px solid rgba(79,142,247,0.1);width:50%;">
+                  <div style="font-size:11px;color:#7a93b0;text-transform:uppercase;margin-bottom:4px;">Return</div>
+                  <strong style="font-size:14px;color:#e8edf5;">{$d['to_date']}</strong>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:12px 20px;border-bottom:1px solid rgba(79,142,247,0.1);">
+                  <div style="font-size:11px;color:#7a93b0;text-transform:uppercase;margin-bottom:4px;">Duration</div>
+                  <strong style="font-size:14px;color:#e8edf5;">{$days} day(s)</strong>
+                </td>
+                <td style="padding:12px 20px;border-bottom:1px solid rgba(79,142,247,0.1);">
+                  <div style="font-size:11px;color:#7a93b0;text-transform:uppercase;margin-bottom:4px;">Booking Ref</div>
+                  <strong style="font-size:14px;color:#4f8ef7;">#BKG-{$booking_id}</strong>
+                </td>
+              </tr>
+              <tr>
+                <td colspan="2" style="padding:16px 20px;background:linear-gradient(135deg,rgba(34,197,94,0.15),rgba(34,197,94,0.05));">
+                  <table width="100%">
+                    <tr>
+                      <td style="font-size:14px;color:#e8edf5;">Total Amount</td>
+                      <td style="font-size:16px;font-weight:bold;color:#22c55e;text-align:right;">LKR {$total}</td>
+                    </tr>
+                    <tr>
+                      <td style="font-size:12px;color:#7a93b0;padding-top:8px;">Advance Paid</td>
+                      <td style="font-size:12px;color:#22c55e;text-align:right;padding-top:8px;">- LKR 10,000</td>
+                    </tr>
+                    <tr>
+                      <td style="font-size:14px;color:#e8edf5;padding-top:8px;">Balance to Pay</td>
+                      <td style="font-size:16px;font-weight:bold;color:#e8edf5;text-align:right;padding-top:8px;">LKR {$balance}</td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#131920;border:1px solid rgba(79,142,247,0.15);border-top:none;border-radius:0 0 16px 16px;padding:24px 40px;text-align:center;">
+            <p style="margin:0 0 8px;font-size:0.85rem;color:#7a93b0;">Questions? Contact us anytime.</p>
+            <p style="margin:0;font-size:0.8rem;color:#3d5570;">Email: amafzhar@gmail.com | Phone: +94 75 45 57 624</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>
+HTML;
+
+    require_once __DIR__ . '/mailer_config.php';
+    try {
+        $mail = getMailer();
+        $mail->addAddress($d['email'], $d['full_name']);
+        $mail->isHTML(true);
+        $mail->Subject = "Booking Confirmed! — {$d['car_name']} | CarForYou #BKG-{$booking_id}";
+        $mail->Body = $html;
+        $mail->AltBody = "Hi {$d['full_name']}, your booking for {$d['car_name']} is confirmed! Pick-up: {$d['from_date']}, Return: {$d['to_date']}. Total: LKR {$total}. Balance to pay: LKR " . ($total - 10000);
+        $mail->send();
+        return true;
+    } catch (\Throwable $e) {
+        error_log('Final confirmation email error: ' . $e->getMessage());
+        return false;
     }
-    return $cancelled;
 }
 
+// ── Helper: send cancellation email ──────────────────────────────────────────
 function sendCancellationEmail($booking) {
     require_once __DIR__ . '/mailer_config.php';
     try {
@@ -229,45 +280,24 @@ function sendCancellationEmail($booking) {
     <td align="center">
       <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
         <tr>
-          <td style="background:linear-gradient(135deg,#0d1117 0%,#111b2a 60%);
-                     border-radius:16px 16px 0 0;padding:40px 40px 32px;text-align:center;
-                     border:1px solid rgba(79,142,247,0.15);border-bottom:none;">
-            <h1 style="margin:0;font-size:2rem;font-weight:300;color:#e8edf5;letter-spacing:-0.02em;">
-              Car<span style="color:#4f8ef7;font-style:italic;font-weight:600;">ForYou</span>
-            </h1>
+          <td style="background:linear-gradient(135deg,#0d1117 0%,#111b2a 60%);border-radius:16px 16px 0 0;padding:40px 40px 32px;text-align:center;border:1px solid rgba(79,142,247,0.15);border-bottom:none;">
+            <h1 style="margin:0;font-size:2rem;font-weight:300;color:#e8edf5;letter-spacing:-0.02em;">Car<span style="color:#4f8ef7;font-style:italic;font-weight:600;">ForYou</span></h1>
           </td>
         </tr>
         <tr>
-          <td style="background:#1e2738;border-left:1px solid rgba(79,142,247,0.15);
-                     border-right:1px solid rgba(79,142,247,0.15);padding:32px 40px;text-align:center;">
-            <span style="display:inline-flex;align-items:center;gap:8px;
-                         background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);
-                         border-radius:30px;padding:8px 20px;
-                         font-size:0.82rem;font-weight:700;letter-spacing:0.08em;
-                         text-transform:uppercase;color:#ef4444;margin-bottom:16px;">
+          <td style="background:#1e2738;border-left:1px solid rgba(79,142,247,0.15);border-right:1px solid rgba(79,142,247,0.15);padding:32px 40px;text-align:center;">
+            <span style="display:inline-flex;align-items:center;gap:8px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);border-radius:30px;padding:8px 20px;font-size:0.82rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#ef4444;margin-bottom:16px;">
               ✕ &nbsp; Booking Cancelled
             </span>
-            <p style="margin:0;font-size:1rem;color:#e8edf5;">
-              Hi <strong style="color:#4f8ef7;">{$booking['full_name']}</strong>,
-            </p>
-            <p style="margin:16px 0 0;font-size:0.9rem;color:#7a93b0;">
-              Your booking for <strong style="color:#e8edf5;">{$booking['car_name']}</strong> 
-              has been cancelled due to non-payment within the required time.
-            </p>
-            <p style="margin:16px 0 0;font-size:0.85rem;color:#7a93b0;">
-              Booking Reference: <strong style="color:#e8edf5;">#BKG-{$booking['id']}</strong>
-            </p>
+            <p style="margin:0;font-size:1rem;color:#e8edf5;">Hi <strong style="color:#4f8ef7;">{$booking['full_name']}</strong>,</p>
+            <p style="margin:16px 0 0;font-size:0.9rem;color:#7a93b0;">Your booking for <strong style="color:#e8edf5;">{$booking['car_name']}</strong> has been cancelled.</p>
+            <p style="margin:16px 0 0;font-size:0.85rem;color:#7a93b0;">Booking Reference: <strong style="color:#e8edf5;">#BKG-{$booking['id']}</strong></p>
           </td>
         </tr>
         <tr>
-          <td style="background:#131920;border:1px solid rgba(79,142,247,0.15);border-top:none;
-                     border-radius:0 0 16px 16px;padding:24px 40px;text-align:center;">
-            <p style="margin:0 0 8px;font-size:0.85rem;color:#7a93b0;">
-              You can make a new booking anytime at our website.
-            </p>
-            <p style="margin:0;font-size:0.8rem;color:#3d5570;">
-              Questions? Contact us at amafzhar@gmail.com | +94 75 45 57 624
-            </p>
+          <td style="background:#131920;border:1px solid rgba(79,142,247,0.15);border-top:none;border-radius:0 0 16px 16px;padding:24px 40px;text-align:center;">
+            <p style="margin:0 0 8px;font-size:0.85rem;color:#7a93b0;">You can make a new booking anytime at our website.</p>
+            <p style="margin:0;font-size:0.8rem;color:#3d5570;">Questions? Contact us at amafzhar@gmail.com | +94 75 45 57 624</p>
           </td>
         </tr>
       </table>
@@ -279,7 +309,7 @@ function sendCancellationEmail($booking) {
 HTML;
         
         $mail->Body = $html;
-        $mail->AltBody = "Hi {$booking['full_name']}, your booking #{$booking['id']} for {$booking['car_name']} has been cancelled due to non-payment.";
+        $mail->AltBody = "Hi {$booking['full_name']}, your booking #{$booking['id']} for {$booking['car_name']} has been cancelled.";
         $mail->send();
         return true;
     } catch (Exception $e) {
@@ -288,34 +318,113 @@ HTML;
     }
 }
 
-// Run auto-cancel on page load
-$cancelled_count = autoCancelUnpaidBookings($conn);
+// ── Helper: Create admin notification ─────────────────────────────────────────
+function createNotification($conn, string $type, string $title, string $message, ?int $reference_id = null, string $reference_type = 'booking'): void {
+    $stmt = $conn->prepare("INSERT INTO notifications (type, title, message, reference_id, reference_type) VALUES (?, ?, ?, ?, ?)");
+    $stmt->bind_param("sssis", $type, $title, $message, $reference_id, $reference_type);
+    $stmt->execute();
+    $stmt->close();
+}
 
-// ── CONFIRM BOOKING ───────────────────────────────────────────────────────────
+// ── Check for new bookings and create notifications ─────────────────────────────
+$new_bookings_stmt = $conn->prepare("
+    SELECT b.id, b.user_email, c.car_name, u.full_name, b.posting_date
+    FROM booking b
+    JOIN users u ON u.email = b.user_email
+    JOIN cars c ON c.id = b.car_id
+    WHERE b.status = 0
+    AND b.posting_date > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+    AND b.id NOT IN (SELECT reference_id FROM notifications WHERE type = 'booking_new' AND reference_type = 'booking')
+");
+$new_bookings_stmt->execute();
+$new_bookings = $new_bookings_stmt->get_result();
+$new_bookings_stmt->close();
+
+while ($new_booking = $new_bookings->fetch_assoc()) {
+    $notif_title = 'New Booking Request';
+    $notif_message = $new_booking['full_name'] . ' booked ' . $new_booking['car_name'] . ' - awaiting your approval';
+    createNotification($conn, 'booking_new', $notif_title, $notif_message, $new_booking['id'], 'booking');
+}
+
+// ── AUTO-CANCEL: awaiting payment expired (2 hours) ───────────────────────────
+function autoCancelExpiredPayments($conn) {
+    $stmt = $conn->prepare("
+        SELECT b.id, b.user_email, c.car_name, u.full_name, u.email
+        FROM booking b
+        JOIN cars c ON c.id = b.car_id
+        JOIN users u ON u.email = b.user_email
+        WHERE b.status = 'awaiting_payment'
+        AND b.confirmed_at < DATE_SUB(NOW(), INTERVAL 2 HOUR)
+    ");
+    $stmt->execute();
+    $bookings = $stmt->get_result();
+    $stmt->close();
+    
+    $cancelled = 0;
+    while ($booking = $bookings->fetch_assoc()) {
+        $update = $conn->prepare("UPDATE booking SET status = 2 WHERE id = ?");
+        $update->bind_param("i", $booking['id']);
+        if ($update->execute()) {
+            $cancelled++;
+            sendCancellationEmail($booking);
+            createNotification($conn, 'warning', 'Payment Expired', $booking['full_name'] . ' - ' . $booking['car_name'] . ' - Payment not received within 2 hours, auto-cancelled', $booking['id'], 'booking');
+        }
+        $update->close();
+    }
+    return $cancelled;
+}
+
+// Run auto-cancel on page load
+$cancelled_count = autoCancelExpiredPayments($conn);
+
+// ── ADMIN: CONFIRM BOOKING (sends advance payment request) ───────────────────
 if (isset($_GET['aeid'])) {
-    $aeid   = intval($_GET['aeid']);
-    $status = 1;
-    $stmt   = $conn->prepare("UPDATE booking SET status=?, payment_status='unpaid' WHERE id=?");
-    $stmt->bind_param("ii", $status, $aeid);
-    if ($stmt->execute()) {
-        // Send confirmation email
-        $sent = sendConfirmationEmail($conn, $aeid);
-        $msg  = $sent
-            ? "Booking confirmed & confirmation email sent to customer."
-            : "Booking confirmed. (Email delivery failed — check mail server config.)";
+    $aeid = intval($_GET['aeid']);
+    $stmt = $conn->prepare("UPDATE booking SET status = 'awaiting_payment', confirmed_at = NOW() WHERE id = ? AND status = 0");
+    $stmt->bind_param("i", $aeid);
+    if ($stmt->execute() && $stmt->affected_rows > 0) {
+        $sent = sendAdvancePaymentEmail($conn, $aeid);
+        $msg = $sent
+            ? "Booking approved! Email sent to customer requesting LKR 10,000 advance payment."
+            : "Booking approved. (Email may have failed — check mail server.)";
+        
+        // Get booking details for notification
+        $detail_stmt = $conn->prepare("SELECT b.*, c.car_name, u.full_name FROM booking b JOIN cars c ON c.id = b.car_id JOIN users u ON u.email = b.user_email WHERE b.id = ?");
+        $detail_stmt->bind_param("i", $aeid);
+        $detail_stmt->execute();
+        $booking_detail = $detail_stmt->get_result()->fetch_assoc();
+        $detail_stmt->close();
+        
+        if ($booking_detail) {
+            createNotification($conn, 'payment', 'Payment Request Sent', $booking_detail['full_name'] . ' - ' . $booking_detail['car_name'] . ' - Awaiting LKR 10,000 advance payment', $aeid, 'booking');
+        }
     } else {
-        $error = "Error updating booking.";
+        $error = "Booking not found or already processed.";
     }
 }
 
-// ── CANCEL BOOKING ────────────────────────────────────────────────────────────
+// ── ADMIN: CANCEL BOOKING ────────────────────────────────────────────────────
 if (isset($_GET['eid'])) {
-    $eid    = intval($_GET['eid']);
-    $status = 2;
-    $stmt   = $conn->prepare("UPDATE booking SET status=?, payment_status='unpaid' WHERE id=?");
-    $stmt->bind_param("ii", $status, $eid);
-    $msg   = $stmt->execute() ? "Booking successfully Cancelled." : "";
-    $error = (!$msg) ? "Error updating booking." : "";
+    $eid = intval($_GET['eid']);
+    $stmt_sel = $conn->prepare("SELECT b.*, c.car_name, u.full_name, u.email FROM booking b JOIN cars c ON c.id = b.car_id JOIN users u ON u.email = b.user_email WHERE b.id = ?");
+    $stmt_sel->bind_param("i", $eid);
+    $stmt_sel->execute();
+    $booking = $stmt_sel->get_result()->fetch_assoc();
+    $stmt_sel->close();
+    
+    if ($booking) {
+        $stmt = $conn->prepare("UPDATE booking SET status = 2 WHERE id = ?");
+        $stmt->bind_param("i", $eid);
+        if ($stmt->execute()) {
+            sendCancellationEmail($booking);
+            createNotification($conn, 'error', 'Booking Cancelled', $booking['full_name'] . ' - ' . $booking['car_name'] . ' has been cancelled', $eid, 'booking');
+            $msg = "Booking cancelled and customer notified.";
+        } else {
+            $error = "Error cancelling booking.";
+        }
+    } else {
+        $error = "Booking not found.";
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -324,6 +433,7 @@ if (isset($_GET['eid'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Manage Bookings | CarForYou Admin</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%230d1117' width='100' height='100' rx='20'/><path d='M20 55 L25 45 L40 40 L60 40 L75 45 L80 55 L80 60 L20 60 Z' fill='none' stroke='%234f8ef7' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/><circle cx='30' cy='62' r='6' fill='%234f8ef7'/><circle cx='70' cy='62' r='6' fill='%234f8ef7'/><path d='M28 50 L30 45 L35 42 L65 42 L70 45 L72 50' fill='none' stroke='%234f8ef7' stroke-width='2' stroke-linecap='round'/></svg>">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 
@@ -420,6 +530,7 @@ if (isset($_GET['eid'])) {
         .badge{display:inline-flex;align-items:center;gap:5px;padding:4px 11px;border-radius:20px;font-size:0.68rem;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;}
         .badge::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;}
         .badge.pending{background:rgba(245,158,11,0.12);color:#f59e0b;}
+        .badge.awaiting{background:rgba(0,212,255,0.12);color:#00d4ff;}
         .badge.confirmed{background:rgba(34,197,94,0.12);color:#22c55e;}
         .badge.cancelled{background:rgba(239,68,68,0.12);color:#ef4444;}
         .badge-paid{background:rgba(34,197,94,0.12);color:#22c55e;}
@@ -449,6 +560,37 @@ if (isset($_GET['eid'])) {
         .email-sent-tag{display:inline-flex;align-items:center;gap:4px;font-size:0.68rem;color:#22c55e;margin-top:3px;}
 
         @keyframes fadeUp{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
+        
+        /* MOBILE RESPONSIVE */
+        @media(max-width:768px){
+            .sidebar{transform:translateX(-100%);z-index:999;transition:transform 0.3s ease;}
+            .sidebar.open{transform:translateX(0);}
+            .main{margin-left:0!important;width:100%!important;}
+            .top-bar{padding:0 16px;height:56px;}
+            .body{padding:16px;}
+            .mobile-menu-btn{display:flex!important;}
+            .tb-left h2{font-size:0.95rem;}
+            table{font-size:0.75rem;}
+            th,td{padding:8px 6px;}
+            th{font-size:0.6rem;}
+            .badge{font-size:0.6rem;padding:2px 6px;}
+            .btn-action{font-size:0.65rem;padding:4px 8px;}
+            .filter-bar select,.filter-bar input,.filter-bar button{padding:8px 12px;font-size:0.8rem;}
+        }
+        @media(max-width:480px){
+            .stats-grid{grid-template-columns:1fr 1fr;}
+            table{font-size:0.7rem;}
+            th,td{padding:6px 4px;}
+            .car-cell{flex-direction:column;align-items:flex-start;gap:4px;}
+            .car-thumb{width:40px;height:28px;}
+        }
+        .mobile-menu-btn{
+            display:none;width:40px;height:40px;background:var(--surface);
+            border:1px solid var(--border2);border-radius:8px;cursor:pointer;
+            align-items:center;justify-content:center;color:var(--text2);font-size:1rem;
+            margin-right:12px;
+        }
+        .mobile-menu-btn:hover{border-color:var(--accent);color:var(--accent);}
     </style>
 </head>
 <body>
@@ -484,6 +626,7 @@ if (isset($_GET['eid'])) {
 
     <div class="top-bar">
         <div class="tb-left">
+            <button class="mobile-menu-btn" onclick="toggleSidebar()"><i class="fa fa-bars"></i></button>
             <h2>Manage Bookings</h2>
             <p id="dateLabel"></p>
         </div>
@@ -557,9 +700,11 @@ if (isset($_GET['eid'])) {
                     <?php if ($result && $result->num_rows > 0):
                         $count = 1;
                         while ($row = $result->fetch_assoc()):
-                            if ($row['status'] == 0)     { $bc='pending';   $bl='Pending'; }
-                            elseif ($row['status'] == 1) { $bc='confirmed'; $bl='Confirmed'; }
-                            else                         { $bc='cancelled'; $bl='Cancelled'; }
+                            $st = $row['status'];
+                            if ($st == 0 || $st === 'Pending' || $st === 'pending') { $bc='pending'; $bl='Pending'; }
+                            elseif ($st === 'awaiting_payment' || $st === 'Awaiting Payment') { $bc='awaiting'; $bl='Awaiting Payment'; }
+                            elseif ($st == 1 || $st === 'Confirmed' || $st === 'confirmed') { $bc='confirmed'; $bl='Confirmed'; }
+                            else { $bc='cancelled'; $bl='Cancelled'; }
 
                             $days = max(1, (int)(new DateTime($row['from_date']))->diff(new DateTime($row['to_date']))->days);
                             $est  = 'LKR ' . number_format($days * $row['price_per_day']);
@@ -604,7 +749,7 @@ if (isset($_GET['eid'])) {
                             </td>
                             <td>
                                 <span class="badge <?php echo $bc; ?>"><?php echo $bl; ?></span>
-                                <?php if ($row['status'] == 1): ?>
+                                <?php if ($row['status'] == 1 || $row['status'] === 'confirmed' || $row['status'] === 'Confirmed' || $row['status'] === 'awaiting_payment'): ?>
                                 <div class="email-sent-tag"><i class="fa fa-envelope-circle-check"></i> Email sent</div>
                                 <?php endif; ?>
                             </td>
@@ -620,17 +765,19 @@ if (isset($_GET['eid'])) {
                                 <div style="font-size:0.7rem;color:var(--text3);"><?php echo date('h:i A', strtotime($row['posting_date'])); ?></div>
                             </td>
                             <td>
-                                <?php if ($row['status'] == 0): ?>
+                                <?php if ($st == 0 || $st === 'Pending' || $st === 'pending'): ?>
                                 <div class="acts">
                                     <a href="bookings.php?aeid=<?php echo $row['id']; ?>" class="abt abt-ok"
-                                       onclick="return confirm('Confirm this booking and send email to customer?')">
-                                        <i class="fa fa-check"></i> Confirm
+                                       onclick="return confirm('Approve booking and request advance payment from customer?')">
+                                        <i class="fa fa-check"></i> Approve
                                     </a>
                                     <a href="bookings.php?eid=<?php echo $row['id']; ?>" class="abt abt-cx"
                                        onclick="return confirm('Cancel this booking?')">
                                         <i class="fa fa-xmark"></i> Cancel
                                     </a>
                                 </div>
+                                <?php elseif ($st === 'awaiting_payment'): // Awaiting Payment ?>
+                                <span class="done-tag" style="color:var(--amber);"><i class="fa fa-clock"></i> Awaiting 2H</span>
                                 <?php else: ?>
                                 <span class="done-tag">— Processed</span>
                                 <?php endif; ?>
@@ -665,6 +812,21 @@ if (isset($_GET['eid'])) {
         document.documentElement.setAttribute('data-theme', theme);
         localStorage.setItem('adminTheme', theme);
         syncIcon();
+    });
+
+    function toggleSidebar() {
+        document.querySelector('.sidebar').classList.toggle('open');
+    }
+    
+    // Close sidebar when clicking outside on mobile
+    document.addEventListener('click', function(e) {
+        var sidebar = document.querySelector('.sidebar');
+        var menuBtn = document.querySelector('.mobile-menu-btn');
+        if (sidebar && menuBtn && window.innerWidth <= 768) {
+            if (!sidebar.contains(e.target) && !menuBtn.contains(e.target)) {
+                sidebar.classList.remove('open');
+            }
+        }
     });
     function syncIcon(){ document.getElementById('themeIcon').className = theme==='dark'?'fa fa-moon':'fa fa-sun'; }
 

@@ -1,10 +1,7 @@
 <?php
 session_start();
 include 'config.php';
-
-if (!isset($_SESSION['alogin']) || empty($_SESSION['alogin'])) {
-    header('Location: index.php'); exit();
-}
+adminAuth();
 
 date_default_timezone_set('Asia/Colombo');
 
@@ -20,6 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $stmt->bind_param("i", $booking_id);
         $stmt->execute();
         $bk = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
 
         if ($bk) {
             $days    = max(1, (int)((strtotime($bk['to_date']) - strtotime($bk['from_date'])) / 86400));
@@ -32,12 +30,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $stmt2 = $conn->prepare("UPDATE booking SET payment_status='paid', payment_date=?, total_amount=? WHERE id=?");
             $stmt2->bind_param("sii", $now, $total, $booking_id);
             $stmt2->execute();
+            $stmt2->close();
 
-            $stmt3 = $conn->prepare("INSERT INTO payments (booking_id, user_email, car_id, amount, penalty, total, payment_status, payment_date, receipt_no) VALUES (?, ?, ?, ?, ?, ?, 'paid', ?, ?)");
-            $stmt3->bind_param("isiiiiss", $booking_id, $bk['user_email'], $bk['car_id'], $amount, $penalty, $total, $now, $receipt);
+            $p_status = 'paid';
+            $p_method = 'Manual';
+            $p_status2 = 'completed';
+            $stmt3 = $conn->prepare("INSERT INTO payments (booking_id, user_email, car_id, amount, penalty, total, payment_status, payment_date, receipt_no, payment_method, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt3->bind_param("isiiiisssss", $booking_id, $bk['user_email'], $bk['car_id'], $amount, $penalty, $total, $p_status, $now, $receipt, $p_method, $p_status2);
             $stmt3->execute();
+            $stmt3->close();
 
             $success_msg = "Payment marked as paid &mdash; Receipt No: <strong>$receipt</strong>";
+        } else {
+            $error_msg = "Booking not found.";
         }
     }
 
@@ -46,6 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $stmt = $conn->prepare("UPDATE booking SET payment_status='unpaid', payment_date=NULL, total_amount=NULL WHERE id=?");
         $stmt->bind_param("i", $booking_id);
         $stmt->execute();
+        $stmt->close();
         $success_msg = "Payment marked as unpaid.";
     }
 }
@@ -56,8 +62,9 @@ $search = trim($_GET['search'] ?? '');
 $where  = "WHERE 1=1";
 $params = []; $types = "";
 
-if ($filter === 'paid')   $where .= " AND b.payment_status='paid'";
-if ($filter === 'unpaid') $where .= " AND b.payment_status='unpaid'";
+if ($filter === 'paid')         $where .= " AND b.payment_status='paid'";
+if ($filter === 'unpaid')      $where .= " AND b.payment_status='unpaid'";
+if ($filter === 'advance_paid') $where .= " AND b.payment_status='advance_paid'";
 if ($search !== '') {
     $like = "%$search%";
     $where .= " AND (b.user_email LIKE ? OR c.car_name LIKE ? OR u.full_name LIKE ?)";
@@ -81,7 +88,8 @@ $bookings = $stmt->get_result();
 // ── STATS ─────────────────────────────────────────────────────
 $s = $conn->query("SELECT
     COUNT(*) AS total,
-    SUM(CASE WHEN payment_status='paid'   THEN 1 ELSE 0 END) AS paid,
+    SUM(CASE WHEN payment_status='paid' THEN 1 ELSE 0 END) AS paid,
+    SUM(CASE WHEN payment_status='advance_paid' THEN 1 ELSE 0 END) AS advance_paid,
     SUM(CASE WHEN payment_status='unpaid' THEN 1 ELSE 0 END) AS unpaid,
     COALESCE(SUM(CASE WHEN payment_status='paid' THEN total_amount ELSE 0 END),0) AS revenue
     FROM booking")->fetch_assoc();
@@ -92,6 +100,7 @@ $s = $conn->query("SELECT
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Payment Management | CarForYou Admin</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%230d1117' width='100' height='100' rx='20'/><path d='M20 55 L25 45 L40 40 L60 40 L75 45 L80 55 L80 60 L20 60 Z' fill='none' stroke='%234f8ef7' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/><circle cx='30' cy='62' r='6' fill='%234f8ef7'/><circle cx='70' cy='62' r='6' fill='%234f8ef7'/><path d='M28 50 L30 45 L35 42 L65 42 L70 45 L72 50' fill='none' stroke='%234f8ef7' stroke-width='2' stroke-linecap='round'/></svg>">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -212,6 +221,7 @@ tr:hover td{background:rgba(79,142,247,0.04);}
 .badge-confirmed{background:rgba(79,142,247,0.12);color:var(--accent);}
 .badge-pending{background:var(--amberbg);color:var(--amber);}
 .badge-cancelled{background:var(--redbg);color:var(--red);}
+.badge-advance{background:rgba(0,212,255,0.12);color:var(--accent);}
 
 .amount-num{font-family:'Syne',sans-serif;font-weight:700;color:var(--text);}
 .penalty-tag{display:inline-block;font-size:0.68rem;color:var(--red);background:var(--redbg);padding:1px 6px;border-radius:4px;margin-top:2px;}
@@ -255,6 +265,39 @@ tr:hover td{background:rgba(79,142,247,0.04);}
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
 @media(max-width:1100px){.stats-grid{grid-template-columns:repeat(2,1fr);}}
 @media print{.sidebar,.top-bar,.toolbar,.card-head,.btn-print{display:none!important;}.main{margin-left:0;width:100%;}}
+
+/* MOBILE RESPONSIVE */
+@media(max-width:768px){
+    .sidebar{transform:translateX(-100%);z-index:999;transition:transform 0.3s ease;}
+    .sidebar.open{transform:translateX(0);}
+    .main{margin-left:0!important;width:100%!important;}
+    .top-bar{padding:0 16px;height:56px;}
+    .body{padding:16px;}
+    .mobile-menu-btn{display:flex!important;}
+    .tb-left h2{font-size:0.95rem;}
+    table{font-size:0.75rem;}
+    th,td{padding:8px 6px;}
+    th{font-size:0.6rem;}
+    .badge{font-size:0.6rem;padding:2px 6px;}
+    .btn-action{font-size:0.65rem;padding:4px 8px;}
+    .stats-grid{grid-template-columns:1fr 1fr;}
+    .filter-tabs{flex-wrap:wrap;}
+}
+@media(max-width:480px){
+    table{font-size:0.7rem;}
+    th,td{padding:6px 4px;}
+    .car-cell{flex-direction:column;align-items:flex-start;gap:4px;}
+    .car-thumb{width:40px;height:28px;}
+    .stats-grid{grid-template-columns:1fr 1fr;}
+    .sc{padding:12px;}
+    .sc-num{font-size:1.2rem;}
+}
+.mobile-menu-btn{
+    display:none;width:40px;height:40px;background:var(--surface);
+    border:1px solid var(--border2);border-radius:8px;cursor:pointer;
+    align-items:center;justify-content:center;color:var(--text2);font-size:1rem;margin-right:12px;
+}
+.mobile-menu-btn:hover{border-color:var(--accent);color:var(--accent);}
 </style>
 </head>
 <body>
@@ -292,6 +335,7 @@ tr:hover td{background:rgba(79,142,247,0.04);}
 <div class="main">
     <div class="top-bar">
         <div class="tb-left">
+            <button class="mobile-menu-btn" onclick="toggleSidebar()"><i class="fa fa-bars"></i></button>
             <h2>Payment Management</h2>
             <p id="dateLabel"></p>
         </div>
@@ -326,19 +370,19 @@ tr:hover td{background:rgba(79,142,247,0.04);}
             </div>
             <div class="sc">
                 <div class="sc-row">
-                    <div><div class="sc-num"><?php echo $s['paid']; ?></div><div class="sc-lbl">Paid</div></div>
+                    <div><div class="sc-num"><?php echo $s['paid']; ?></div><div class="sc-lbl">Fully Paid</div></div>
                     <div class="sc-icon" style="background:var(--greenbg);color:var(--green)"><i class="fa fa-circle-check"></i></div>
                 </div>
             </div>
             <div class="sc">
                 <div class="sc-row">
-                    <div><div class="sc-num"><?php echo $s['unpaid']; ?></div><div class="sc-lbl">Unpaid</div></div>
+                    <div><div class="sc-num"><?php echo $s['advance_paid']; ?></div><div class="sc-lbl">Balance Pending</div></div>
                     <div class="sc-icon" style="background:var(--amberbg);color:var(--amber)"><i class="fa fa-clock"></i></div>
                 </div>
             </div>
             <div class="sc">
                 <div class="sc-row">
-                    <div><div class="sc-num">Rs <?php echo number_format($s['revenue']); ?></div><div class="sc-lbl">Total Revenue</div></div>
+                    <div><div class="sc-num">Rs <?php echo number_format($s['revenue']); ?></div><div class="sc-lbl">Revenue Received</div></div>
                     <div class="sc-icon" style="background:var(--greenbg);color:var(--green)"><i class="fa fa-coins"></i></div>
                 </div>
             </div>
@@ -351,8 +395,8 @@ tr:hover td{background:rgba(79,142,247,0.04);}
                 <form method="GET" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
                     <div class="filter-tabs">
                         <button type="submit" name="status" value="all"    class="filter-tab <?php echo $filter==='all'   ?'active':'';?>">All</button>
-                        <button type="submit" name="status" value="unpaid" class="filter-tab <?php echo $filter==='unpaid'?'active':'';?>">Unpaid</button>
-                        <button type="submit" name="status" value="paid"   class="filter-tab <?php echo $filter==='paid'  ?'active':'';?>">Paid</button>
+                        <button type="submit" name="status" value="paid"   class="filter-tab <?php echo $filter==='paid'  ?'active':'';?>">Fully Paid</button>
+                        <button type="submit" name="status" value="advance_paid" class="filter-tab <?php echo $filter==='advance_paid'?'active':'';?>">Balance Pending</button>
                     </div>
                     <div class="search-wrap">
                         <i class="fa fa-magnifying-glass"></i>
@@ -393,11 +437,20 @@ tr:hover td{background:rgba(79,142,247,0.04);}
                         $penalty = intval($b['penalty_amount'] ?? 0);
                         $total   = $b['total_amount'] ?? ($amount + $penalty);
                         $img     = !empty($b['Vimage1']) ? "img/vehicleimages/".htmlspecialchars($b['Vimage1']) : "https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=60&q=60";
-                        $bstatus = intval($b['status']);
-                        if ($bstatus===1){ $bc='badge-confirmed'; $bl='Confirmed'; }
-                        elseif($bstatus===2){ $bc='badge-cancelled'; $bl='Cancelled'; }
+                        $bstatus = $b['status'];
+                        $bst = intval($bstatus);
+                        if ($bst === 1 || $bstatus === 'confirmed' || $bstatus === 'Confirmed'){ 
+                            $bc='badge-confirmed'; $bl='Confirmed'; 
+                        }
+                        elseif ($bst === 2 || $bstatus === 'cancelled' || $bstatus === 'Cancelled'){ 
+                            $bc='badge-cancelled'; $bl='Cancelled'; 
+                        }
+                        elseif ($bstatus === 'awaiting_payment' || $bstatus === 'Awaiting Payment'){ 
+                            $bc='badge-pending'; $bl='Awaiting Payment'; 
+                        }
                         else { $bc='badge-pending'; $bl='Pending'; }
-                        $paid = ($b['payment_status'] === 'paid');
+                        $pstatus = $b['payment_status'] ?? 'unpaid';
+                        $paid = ($pstatus === 'paid' || $pstatus === 'advance_paid');
                         $rd = [
                             'id'      => $b['id'],
                             'name'    => $b['full_name'] ?? $b['user_email'],
@@ -438,7 +491,13 @@ tr:hover td{background:rgba(79,142,247,0.04);}
                         <?php if ($penalty > 0): ?><div class="penalty-tag">+Rs <?php echo number_format($penalty); ?> penalty</div><?php endif; ?>
                     </td>
                     <td>
-                        <span class="badge <?php echo $paid?'badge-paid':'badge-unpaid'; ?>"><?php echo $paid?'Paid':'Unpaid'; ?></span>
+                        <span class="badge <?php echo $pstatus === 'advance_paid' ? 'badge-advance' : ($paid ? 'badge-paid' : 'badge-unpaid'); ?>">
+                            <?php 
+                            if ($pstatus === 'advance_paid') echo 'Balance Pending';
+                            elseif ($pstatus === 'paid') echo 'Fully Paid';
+                            else echo 'Unpaid';
+                            ?>
+                        </span>
                         <?php if ($paid && $b['payment_date']): ?>
                         <div style="font-size:0.7rem;color:var(--text3);margin-top:3px;"><?php echo date('d M Y', strtotime($b['payment_date'])); ?></div>
                         <?php endif; ?>
@@ -446,20 +505,21 @@ tr:hover td{background:rgba(79,142,247,0.04);}
                     <td><span class="badge <?php echo $bc; ?>"><?php echo $bl; ?></span></td>
                     <td>
                         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                        <?php if (!$paid): ?>
+                        <?php if ($pstatus === 'paid'): ?>
+                            <button class="btn-action btn-rec" onclick='showReceipt(<?php echo json_encode($rd); ?>)'>
+                                <i class="fa fa-file-invoice"></i> Receipt
+                            </button>
+                        <?php elseif ($pstatus === 'advance_paid'): ?>
+                            <form method="POST" style="display:inline;" onsubmit="return confirm('Mark balance received for booking #<?php echo $b['id']; ?>?')">
+                                <input type="hidden" name="action" value="mark_paid">
+                                <input type="hidden" name="booking_id" value="<?php echo $b['id']; ?>">
+                                <button type="submit" class="btn-action btn-pay"><i class="fa fa-money-bill"></i> Mark Balance Paid</button>
+                            </form>
+                        <?php else: ?>
                             <form method="POST" style="display:inline;" onsubmit="return confirm('Mark booking #<?php echo $b['id']; ?> as paid?')">
                                 <input type="hidden" name="action" value="mark_paid">
                                 <input type="hidden" name="booking_id" value="<?php echo $b['id']; ?>">
                                 <button type="submit" class="btn-action btn-pay"><i class="fa fa-check"></i> Mark Paid</button>
-                            </form>
-                        <?php else: ?>
-                            <button class="btn-action btn-rec" onclick='showReceipt(<?php echo json_encode($rd); ?>)'>
-                                <i class="fa fa-file-invoice"></i> Receipt
-                            </button>
-                            <form method="POST" style="display:inline;" onsubmit="return confirm('Mark as unpaid?')">
-                                <input type="hidden" name="action" value="mark_unpaid">
-                                <input type="hidden" name="booking_id" value="<?php echo $b['id']; ?>">
-                                <button type="submit" class="btn-action btn-unp"><i class="fa fa-rotate-left"></i> Unpaid</button>
                             </form>
                         <?php endif; ?>
                         </div>
@@ -497,6 +557,17 @@ tr:hover td{background:rgba(79,142,247,0.04);}
         localStorage.setItem('adminTheme', theme); syncIcon();
     });
     function syncIcon(){ document.getElementById('themeIcon').className = theme==='dark'?'fa fa-moon':'fa fa-sun'; }
+    
+    function toggleSidebar() { document.querySelector('.sidebar').classList.toggle('open'); }
+    document.addEventListener('click', function(e) {
+        var sidebar = document.querySelector('.sidebar');
+        var menuBtn = document.querySelector('.mobile-menu-btn');
+        if (sidebar && menuBtn && window.innerWidth <= 768) {
+            if (!sidebar.contains(e.target) && !menuBtn.contains(e.target)) {
+                sidebar.classList.remove('open');
+            }
+        }
+    });
 
     function showReceipt(d) {
         document.getElementById('receiptBody').innerHTML =

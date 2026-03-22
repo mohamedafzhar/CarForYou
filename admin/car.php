@@ -1,11 +1,7 @@
 <?php
 session_start();
 include 'config.php';
-
-if (!isset($_SESSION['alogin']) || empty($_SESSION['alogin'])) {
-    header('Location: index.php');
-    exit();
-}
+adminAuth();
 
 $msg   = "";
 $error = "";
@@ -112,6 +108,7 @@ $cars_total = $cars_res ? $cars_res->num_rows : 0;
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Manage Cars | CarForYou Admin</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%230d1117' width='100' height='100' rx='20'/><path d='M20 55 L25 45 L40 40 L60 40 L75 45 L80 55 L80 60 L20 60 Z' fill='none' stroke='%234f8ef7' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/><circle cx='30' cy='62' r='6' fill='%234f8ef7'/><circle cx='70' cy='62' r='6' fill='%234f8ef7'/><path d='M28 50 L30 45 L35 42 L65 42 L70 45 L72 50' fill='none' stroke='%234f8ef7' stroke-width='2' stroke-linecap='round'/></svg>">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 
@@ -320,6 +317,23 @@ $cars_total = $cars_res ? $cars_res->num_rows : 0;
         .img-dot.filled { background:var(--accent); }
 
         @keyframes fadeUp{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
+        .hamburger{display:none;width:38px;height:38px;border-radius:9px;border:1px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer;font-size:0.95rem;transition:all 0.2s;}
+        .hamburger:hover{border-color:var(--accent);color:var(--accent);}
+        .sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:99;}
+        @media (max-width:768px){
+            .hamburger{display:flex;align-items:center;justify-content:center;}
+            .sidebar{transform:translateX(-100%);z-index:200;}
+            .sidebar.open{transform:translateX(0);}
+            .sidebar-overlay.open{display:block;}
+            .main{margin-left:0;width:100%;}
+            .body{padding:20px 16px;}
+            .card{padding:18px 16px;}
+            .form-grid{grid-template-columns:1fr;}
+            .img-upload-grid{grid-template-columns:1fr 1fr;}
+            .top-bar{padding:0 16px;}
+            table{font-size:0.8rem;}
+            td,th{padding:10px 8px;}
+        }
     </style>
 </head>
 <body>
@@ -351,12 +365,17 @@ $cars_total = $cars_res ? $cars_res->num_rows : 0;
 </div>
 
 <!-- MAIN -->
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+
 <div class="main">
 
     <div class="top-bar">
-        <div class="tb-left">
-            <h2 id="pageTitle">Car Management</h2>
-            <p id="dateLabel"></p>
+        <div class="tb-left" style="display:flex;align-items:center;gap:12px;">
+            <button class="hamburger" id="hamburgerBtn"><i class="fa fa-bars"></i></button>
+            <div>
+                <h2 id="pageTitle">Car Management</h2>
+                <p id="dateLabel"></p>
+            </div>
         </div>
         <div class="tb-right">
             <button class="theme-btn" id="themeBtn" title="Toggle Theme">
@@ -372,7 +391,7 @@ $cars_total = $cars_res ? $cars_res->num_rows : 0;
         </div>
     </div>
 
-    <div class="body">
+        <div class="body">
 
         <?php if ($msg): ?>
         <div class="alert alert-success"><i class="fa fa-circle-check"></i> <?php echo htmlspecialchars($msg); ?></div>
@@ -593,6 +612,16 @@ document.getElementById('themeBtn').addEventListener('click', function(){
     syncIcon();
 });
 function syncIcon(){ document.getElementById('themeIcon').className = theme==='dark'?'fa fa-moon':'fa fa-sun'; }
+
+// ── Mobile sidebar ────────────────────────────────────────────────────────────
+document.getElementById('hamburgerBtn').addEventListener('click', function(){
+    document.querySelector('.sidebar').classList.toggle('open');
+    document.getElementById('sidebarOverlay').classList.toggle('open');
+});
+document.getElementById('sidebarOverlay').addEventListener('click', function(){
+    document.querySelector('.sidebar').classList.remove('open');
+    this.classList.remove('open');
+});
 
 // ── Image preview ─────────────────────────────────────────────────────────────
 function previewImage(input, n) {

@@ -2,13 +2,190 @@
 session_start();
 include 'config.php';
 
-if (!isset($_SESSION['alogin']) || empty($_SESSION['alogin'])) {
-    header('Location: index.php');
-    exit();
-}
+require_once '../includes/PHPMailer/src/Exception.php';
+require_once '../includes/PHPMailer/src/PHPMailer.php';
+require_once '../includes/PHPMailer/src/SMTP.php';
+
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
 
 $msg   = "";
 $error = "";
+
+// Check if this is an AJAX request
+$isAjax = !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && 
+          strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest';
+
+if (!isset($_SESSION['alogin']) || empty($_SESSION['alogin'])) {
+    if (!$isAjax) {
+        adminAuth();
+    }
+    echo json_encode(['success' => false, 'message' => 'Session expired. Please login again.']);
+    exit();
+}
+
+// ── AJAX: Check username uniqueness ─────────────────────────────────────────────
+if (isset($_GET['check_username'])) {
+    header('Content-Type: application/json');
+    $username = trim($_GET['check_username']);
+    if (strlen($username) < 3) {
+        echo json_encode(['available' => false, 'message' => 'Username too short']);
+    } else {
+        $stmt = $conn->prepare("SELECT id FROM admin WHERE username = ?");
+        $stmt->bind_param("s", $username);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        echo json_encode(['available' => $result->num_rows === 0, 'message' => $result->num_rows === 0 ? 'Username available' : 'Username already taken']);
+        $stmt->close();
+    }
+    exit();
+}
+
+// ── AJAX: Send OTP for admin registration ──────────────────────────────────────
+if (isset($_POST['send_admin_otp'])) {
+    header('Content-Type: application/json');
+    $username = trim($_POST['username']);
+    $email    = trim($_POST['email']);
+    $password = $_POST['password'];
+    
+    $response = ['success' => false, 'message' => ''];
+    
+    if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $response['message'] = 'Please enter a valid email address.';
+    } elseif (strlen($username) < 3) {
+        $response['message'] = 'Username must be at least 3 characters.';
+    } elseif (!preg_match('/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/', $password)) {
+        $response['message'] = 'Password does not meet complexity requirements.';
+    } else {
+        $stmt = $conn->prepare("SELECT id FROM admin WHERE username = ?");
+        $stmt->bind_param("s", $username);
+        $stmt->execute();
+        if ($stmt->get_result()->num_rows > 0) {
+            $response['message'] = 'Username already exists.';
+        } else {
+            $stmt->close();
+            $stmt = $conn->prepare("SELECT id FROM admin WHERE email = ?");
+            $stmt->bind_param("s", $email);
+            $stmt->execute();
+            if ($stmt->get_result()->num_rows > 0) {
+                $response['message'] = 'Email already registered to another admin.';
+            } else {
+                $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+                $_SESSION['admin_reg_otp'] = $otp;
+                $_SESSION['admin_reg_data'] = [
+                    'username' => $username,
+                    'email' => $email,
+                    'password' => password_hash($password, PASSWORD_DEFAULT),
+                    'expires' => date('Y-m-d H:i:s', strtotime('+10 minutes'))
+                ];
+                
+                $mail = new PHPMailer(true);
+                try {
+                    $mail->isSMTP();
+                    $mail->Host       = SMTP_HOST;
+                    $mail->SMTPAuth   = true;
+                    $mail->Username   = SMTP_USERNAME;
+                    $mail->Password   = SMTP_PASSWORD;
+                    $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+                    $mail->Port       = (int)SMTP_PORT;
+                    $mail->setFrom(MAIL_FROM, 'CarForYou Admin');
+                    $mail->addAddress($email, $username);
+                    $mail->isHTML(true);
+                    $mail->Subject = 'CarForYou Admin - Email Verification OTP';
+                    $mail->Body = "
+                        <div style='font-family:sans-serif;max-width:400px;margin:auto;padding:30px;background:#1e2738;color:#e8edf5;border-radius:12px;'>
+                            <h2 style='margin:0 0 20px;text-align:center;'>Verify Your Email</h2>
+                            <p style='margin:0 0 20px;'>Your verification code is:</p>
+                            <div style='font-size:32px;font-weight:bold;letter-spacing:8px;color:#4f8ef7;text-align:center;padding:20px;background:#0d1117;border-radius:8px;margin:20px 0;'>$otp</div>
+                            <p style='margin:0;font-size:12px;color:#7a93b0;'>This code expires in 10 minutes.</p>
+                        </div>";
+                    $mail->send();
+                    $response['success'] = true;
+                    $response['message'] = 'OTP sent to your email.';
+                } catch (Exception $e) {
+                    $response['message'] = 'Failed to send OTP: ' . $e->getMessage();
+                    error_log('PHPMailer Error: ' . $e->getMessage());
+                }
+            }
+        }
+    }
+    echo json_encode($response);
+    $stmt->close();
+    exit();
+}
+
+// ── AJAX: Resend OTP ──────────────────────────────────────────────────────────
+if (isset($_POST['resend_admin_otp'])) {
+    header('Content-Type: application/json');
+    if (!isset($_SESSION['admin_reg_data'])) {
+        echo json_encode(['success' => false, 'message' => 'Session expired. Please start again.']);
+        exit();
+    }
+    
+    $email    = $_SESSION['admin_reg_data']['email'];
+    $username = $_SESSION['admin_reg_data']['username'];
+    $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+    $_SESSION['admin_reg_otp'] = $otp;
+    $_SESSION['admin_reg_data']['expires'] = date('Y-m-d H:i:s', strtotime('+10 minutes'));
+    
+    $mail = new PHPMailer(true);
+    try {
+        $mail->isSMTP();
+        $mail->Host       = SMTP_HOST;
+        $mail->SMTPAuth   = true;
+        $mail->Username   = SMTP_USERNAME;
+        $mail->Password   = SMTP_PASSWORD;
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+        $mail->Port       = (int)SMTP_PORT;
+        $mail->setFrom(MAIL_FROM, 'CarForYou Admin');
+        $mail->addAddress($email, $username);
+        $mail->isHTML(true);
+        $mail->Subject = 'CarForYou Admin - New Verification OTP';
+        $mail->Body = "
+            <div style='font-family:sans-serif;max-width:400px;margin:auto;padding:30px;background:#1e2738;color:#e8edf5;border-radius:12px;'>
+                <h2 style='margin:0 0 20px;text-align:center;'>New Verification Code</h2>
+                <p style='margin:0 0 20px;'>Your new verification code is:</p>
+                <div style='font-size:32px;font-weight:bold;letter-spacing:8px;color:#4f8ef7;text-align:center;padding:20px;background:#0d1117;border-radius:8px;margin:20px 0;'>$otp</div>
+                <p style='margin:0;font-size:12px;color:#7a93b0;'>This code expires in 10 minutes.</p>
+            </div>";
+        $mail->send();
+        echo json_encode(['success' => true, 'message' => 'New OTP sent to your email.']);
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'message' => 'Failed to send OTP. Please try again.']);
+    }
+    exit();
+}
+
+// ── Verify OTP and Create Admin ────────────────────────────────────────────────
+if (isset($_POST['verify_admin_otp'])) {
+    header('Content-Type: application/json');
+    $entered_otp = trim($_POST['otp_code'] ?? '');
+    
+    if (!isset($_SESSION['admin_reg_otp']) || !isset($_SESSION['admin_reg_data'])) {
+        echo json_encode(['success' => false, 'message' => 'Registration session expired. Please try again.']);
+        exit();
+    } elseif ($entered_otp !== $_SESSION['admin_reg_otp']) {
+        echo json_encode(['success' => false, 'message' => 'Invalid OTP. Please try again.']);
+        exit();
+    } elseif (strtotime($_SESSION['admin_reg_data']['expires']) < time()) {
+        echo json_encode(['success' => false, 'message' => 'OTP expired. Please request a new one.']);
+        unset($_SESSION['admin_reg_otp'], $_SESSION['admin_reg_data']);
+        exit();
+    } else {
+        $data = $_SESSION['admin_reg_data'];
+        $stmt = $conn->prepare("INSERT INTO admin (username, password, email, updation_date) VALUES (?,?,?,NOW())");
+        $stmt->bind_param("sss", $data['username'], $data['password'], $data['email']);
+        if ($stmt->execute()) {
+            unset($_SESSION['admin_reg_otp'], $_SESSION['admin_reg_data']);
+            $_SESSION['admin_success'] = 'Admin account "' . htmlspecialchars($data['username']) . '" created successfully!';
+            echo json_encode(['success' => true, 'message' => 'Admin account created successfully!']);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Error creating admin: ' . $stmt->error]);
+        }
+        $stmt->close();
+        exit();
+    }
+}
 
 // ── DELETE USER ──────────────────────────────────────────────────────────────
 if (isset($_GET['deluser'])) {
@@ -41,6 +218,7 @@ if (isset($_GET['deladmin'])) {
 // Flash messages
 if (isset($_SESSION['flash_msg'])) { $msg   = $_SESSION['flash_msg']; unset($_SESSION['flash_msg']); }
 if (isset($_SESSION['flash_err'])) { $error = $_SESSION['flash_err']; unset($_SESSION['flash_err']); }
+if (isset($_SESSION['admin_success'])) { $msg = $_SESSION['admin_success']; unset($_SESSION['admin_success']); }
 
 // ── UPDATE ADMIN ─────────────────────────────────────────────────────────────
 if (isset($_POST['update_admin'])) {
@@ -93,47 +271,6 @@ if (isset($_POST['update_admin'])) {
     }
 }
 
-// ── ADD ADMIN ─────────────────────────────────────────────────────────────────
-if (isset($_POST['add_admin'])) {
-    $username = trim($_POST['admin_username']);
-    $email    = trim($_POST['admin_email']);
-    $password = md5(trim($_POST['admin_password']));
-
-    if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $error = "A valid email address is required to create an admin account.";
-    } elseif (strlen($username) < 3) {
-        $error = "Username must be at least 3 characters.";
-    } elseif (strlen(trim($_POST['admin_password'])) < 6) {
-        $error = "Password must be at least 6 characters.";
-    } else {
-        // Check duplicate username
-        $chk = $conn->prepare("SELECT id FROM admin WHERE username=?");
-        $chk->bind_param("s", $username);
-        $chk->execute();
-        $chkResult = $chk->get_result();
-        $usernameTaken = $chkResult->num_rows > 0;
-        $chkResult->free(); $chk->close();
-
-        // Check duplicate email
-        $chkE = $conn->prepare("SELECT id FROM admin WHERE email=?");
-        $chkE->bind_param("s", $email);
-        $chkE->execute();
-        $chkEResult = $chkE->get_result();
-        $emailTaken = $chkEResult->num_rows > 0;
-        $chkEResult->free(); $chkE->close();
-
-        if ($usernameTaken) {
-            $error = "Admin username already exists.";
-        } elseif ($emailTaken) {
-            $error = "That email is already registered to another admin.";
-        } else {
-            $stmt = $conn->prepare("INSERT INTO admin (username, password, email, updation_date) VALUES (?,?,?,NOW())");
-            $stmt->bind_param("sss", $username, $password, $email);
-            $msg = $stmt->execute() ? "New admin created successfully." : "Error: " . $stmt->error;
-        }
-    }
-}
-
 // ── UPDATE USER ───────────────────────────────────────────────────────────────
 if (isset($_POST['update_user'])) {
     $id         = intval($_POST['edit_id']);
@@ -142,15 +279,21 @@ if (isset($_POST['update_user'])) {
     $contact_no = trim($_POST['contact_no']);
     $city       = trim($_POST['city']);
     $country    = trim($_POST['country']);
-    $chk = $conn->prepare("SELECT id FROM users WHERE email=? AND id!=?");
-    $chk->bind_param("si", $email, $id);
-    $chk->execute();
-    if ($chk->get_result()->num_rows > 0) {
-        $error = "Email already in use by another user.";
+    $verified   = isset($_POST['email_verified']) ? 1 : 0;
+    
+    if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $error = "Please enter a valid email address.";
     } else {
-        $stmt = $conn->prepare("UPDATE users SET full_name=?,email=?,contact_no=?,city=?,country=? WHERE id=?");
-        $stmt->bind_param("sssssi", $full_name, $email, $contact_no, $city, $country, $id);
-        $msg = $stmt->execute() ? "User updated successfully." : "Error: " . $stmt->error;
+        $chk = $conn->prepare("SELECT id FROM users WHERE email=? AND id!=?");
+        $chk->bind_param("si", $email, $id);
+        $chk->execute();
+        if ($chk->get_result()->num_rows > 0) {
+            $error = "Email already in use by another user.";
+        } else {
+            $stmt = $conn->prepare("UPDATE users SET full_name=?,email=?,contact_no=?,city=?,country=?,email_verified=? WHERE id=?");
+            $stmt->bind_param("sssssii", $full_name, $email, $contact_no, $city, $country, $verified, $id);
+            $msg = $stmt->execute() ? "User updated successfully." : "Error: " . $stmt->error;
+        }
     }
 }
 
@@ -204,11 +347,29 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>User Management | CarForYou Admin</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%230d1117' width='100' height='100' rx='20'/><path d='M20 55 L25 45 L40 40 L60 40 L75 45 L80 55 L80 60 L20 60 Z' fill='none' stroke='%234f8ef7' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/><circle cx='30' cy='62' r='6' fill='%234f8ef7'/><circle cx='70' cy='62' r='6' fill='%234f8ef7'/><path d='M28 50 L30 45 L35 42 L65 42 L70 45 L72 50' fill='none' stroke='%234f8ef7' stroke-width='2' stroke-linecap='round'/></svg>">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 
     <style>
         :root { --sw:268px; --tr:0.35s cubic-bezier(0.4,0,0.2,1); }
+        .hamburger{display:none;width:38px;height:38px;border-radius:9px;border:1px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer;font-size:0.95rem;transition:all 0.2s;}
+        .hamburger:hover{border-color:var(--accent);color:var(--accent);}
+        .sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:99;}
+        @media (max-width:768px){
+            .hamburger{display:flex;align-items:center;justify-content:center;}
+            .sidebar{transform:translateX(-100%);z-index:200;}
+            .sidebar.open{transform:translateX(0);}
+            .sidebar-overlay.open{display:block;}
+            .main{margin-left:0;width:100%;}
+            .body{padding:20px 16px;}
+            .card{padding:18px 16px;}
+            .form-grid{grid-template-columns:1fr;}
+            .form-group.full,.span-2,.span-3{grid-column:span 1;}
+            .top-bar{padding:0 16px;}
+            table{font-size:0.8rem;}
+            td,th{padding:10px 8px;}
+        }
 
         [data-theme="dark"] {
             --bg:#0d1117; --bg2:#131920; --surface:#1e2738; --surface2:#253044;
@@ -404,13 +565,19 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
     </ul>
 </div>
 
+<!-- SIDEBAR OVERLAY -->
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+
 <!-- MAIN -->
 <div class="main">
 
     <div class="top-bar">
-        <div class="tb-left">
-            <h2>User Management</h2>
-            <p id="dateLabel"></p>
+        <div class="tb-left" style="display:flex;align-items:center;gap:12px;">
+            <button class="hamburger" id="hamburgerBtn"><i class="fa fa-bars"></i></button>
+            <div>
+                <h2>User Management</h2>
+                <p id="dateLabel"></p>
+            </div>
         </div>
         <div class="tb-right">
             <button class="theme-btn" id="themeBtn" title="Toggle Theme">
@@ -434,6 +601,7 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
         <?php if ($error): ?>
         <div class="alert alert-error"><i class="fa fa-circle-xmark"></i> <?php echo htmlspecialchars($error); ?></div>
         <?php endif; ?>
+        <div class="alert alert-success" id="successMsg" style="display:none;"><i class="fa fa-circle-check"></i> <span></span></div>
 
         <!-- ADMIN ACCOUNTS -->
         <div class="card">
@@ -517,6 +685,7 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
                         <tr>
                             <th>#</th>
                             <th>Customer</th>
+                            <th>Email</th>
                             <th>Contact</th>
                             <th>Location</th>
                             <th>Reg Date</th>
@@ -528,11 +697,20 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
                         while ($row = $resUser->fetch_assoc()): ?>
                         <tr>
                             <td><span class="row-num"><?php echo $cnt++; ?></span></td>
+                            <td><strong><?php echo htmlspecialchars($row['full_name']); ?></strong></td>
                             <td>
-                                <div class="user-cell">
-                                    <div class="uname"><?php echo htmlspecialchars($row['full_name']); ?></div>
-                                    <div class="uemail"><i class="fa fa-at" style="font-size:0.68rem;"></i><?php echo htmlspecialchars($row['email']); ?></div>
-                                </div>
+                                <?php 
+                                $userEmail = htmlspecialchars($row['email']);
+                                $verified = !empty($row['email_verified']);
+                                ?>
+                                <span style="font-size:0.82rem;color:var(--text2);display:flex;align-items:center;gap:5px;">
+                                    <?php echo $userEmail; ?>
+                                    <?php if ($verified): ?>
+                                        <i class="fa fa-circle-check" style="color:#22c55e;font-size:0.7rem;" title="Verified"></i>
+                                    <?php else: ?>
+                                        <i class="fa fa-circle-exclamation" style="color:#f59e0b;font-size:0.7rem;" title="Not Verified"></i>
+                                    <?php endif; ?>
+                                </span>
                             </td>
                             <td style="font-size:0.82rem;"><?php echo htmlspecialchars($row['contact_no'] ?: '—'); ?></td>
                             <td style="font-size:0.82rem;"><?php echo htmlspecialchars(trim($row['city'].', '.$row['country'], ', ')); ?></td>
@@ -544,6 +722,7 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
                                         data-id="<?php echo $row['id']; ?>"
                                         data-fullname="<?php echo htmlspecialchars($row['full_name'], ENT_QUOTES); ?>"
                                         data-email="<?php echo htmlspecialchars($row['email'], ENT_QUOTES); ?>"
+                                        data-email-verified="<?php echo $row['email_verified'] ?? 0; ?>"
                                         data-contact="<?php echo htmlspecialchars($row['contact_no'] ?? '', ENT_QUOTES); ?>"
                                         data-city="<?php echo htmlspecialchars($row['city'] ?? '', ENT_QUOTES); ?>"
                                         data-country="<?php echo htmlspecialchars($row['country'] ?? '', ENT_QUOTES); ?>"
@@ -559,7 +738,7 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
                             </td>
                         </tr>
                         <?php endwhile; else: ?>
-                        <tr class="empty-row"><td colspan="6">No customers found.</td></tr>
+                        <tr class="empty-row"><td colspan="7">No customers found.</td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
@@ -611,40 +790,86 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
 <!-- ══ MODAL: ADD ADMIN ══ -->
 <div class="modal-overlay" id="addAdminModal">
     <div class="modal">
-        <button class="modal-close" onclick="closeModal('addAdminModal')"><i class="fa fa-xmark"></i></button>
+        <button class="modal-close" onclick="closeAdminModal()"><i class="fa fa-xmark"></i></button>
         <h3><i class="fa fa-user-shield" style="color:var(--accent);"></i> Add New Admin</h3>
-        <div class="email-notice">
-            <i class="fa fa-circle-info"></i>
-            <span><strong>Email is required</strong> — the admin will need it to recover their password if they ever forget it.</span>
-        </div>
-        <form method="POST">
-            <div class="form-grid">
-                <div class="form-group full">
-                    <label>Username <span class="req">*</span></label>
-                    <input type="text" name="admin_username" class="form-control" placeholder="e.g. admin2" minlength="3" required>
-                    <span class="form-hint">Minimum 3 characters</span>
-                </div>
-                <div class="form-group full">
-                    <label>Email Address <span class="req">*</span></label>
-                    <input type="email" name="admin_email" class="form-control" placeholder="admin@example.com" required>
-                    <span class="form-hint">Used for password recovery</span>
-                </div>
-                <div class="form-group full">
-                    <label>Password <span class="req">*</span></label>
-                    <input type="password" name="admin_password" class="form-control" placeholder="Set a strong password" minlength="6" required>
-                    <span class="form-hint">Minimum 6 characters</span>
-                </div>
-                <div class="form-group full">
-                    <label>Confirm Password <span class="req">*</span></label>
-                    <input type="password" id="admin_confirm_pwd" class="form-control" placeholder="Repeat password" required>
-                </div>
+        
+        <!-- Step 1: Form -->
+        <div id="adminFormStep">
+            <div class="email-notice">
+                <i class="fa fa-circle-info"></i>
+                <span>An OTP will be sent to the email for verification before creating the account.</span>
             </div>
-            <div class="pwd-error" id="adminAddPwdErr"><i class="fa fa-triangle-exclamation"></i> Passwords do not match.</div>
-            <div class="info-box"><i class="fa fa-circle-info"></i> This admin will have full access to the admin panel.</div>
-            <button type="submit" name="add_admin" class="btn-submit blue">
-                <i class="fa fa-user-plus"></i> Create Admin Account
-            </button>
-        </form>
+            <form id="adminRegForm">
+                <div class="form-grid">
+                    <div class="form-group full">
+                        <label>Username <span class="req">*</span></label>
+                        <div style="position:relative;">
+                            <input type="text" name="admin_username" id="admin_username" class="form-control" placeholder="e.g. admin2" minlength="3" required onblur="checkUsername(this.value)">
+                            <span id="usernameStatus" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:0.75rem;"></span>
+                        </div>
+                        <span class="form-hint" id="usernameHint">At least 3 characters</span>
+                    </div>
+                    <div class="form-group full">
+                        <label>Email Address <span class="req">*</span></label>
+                        <input type="email" name="admin_email" id="admin_email" class="form-control" placeholder="admin@example.com" required>
+                        <span class="form-hint">OTP will be sent to this email</span>
+                    </div>
+                    <div class="form-group full">
+                        <label>Password <span class="req">*</span></label>
+                        <input type="password" name="admin_password" id="admin_password" class="form-control" placeholder="Set a strong password" required oninput="validatePasswordStrength(this.value)">
+                        <span class="form-hint" id="passwordHint"></span>
+                    </div>
+                    <div class="form-group full">
+                        <label>Confirm Password <span class="req">*</span></label>
+                        <input type="password" id="admin_confirm_pwd" class="form-control" placeholder="Repeat password" required>
+                    </div>
+                </div>
+                <div class="pwd-error" id="adminAddPwdErr"><i class="fa fa-triangle-exclamation"></i> Passwords do not match.</div>
+                <div class="pwd-error" id="adminAddPwdStrength"><i class="fa fa-triangle-exclamation"></i> Password does not meet requirements.</div>
+                <div class="info-box"><i class="fa fa-circle-info"></i> This admin will have full access to the admin panel.</div>
+                <div class="alert alert-error" id="adminFormError" style="display:none;margin-bottom:16px;"></div>
+                <button type="submit" class="btn-submit blue" id="sendOtpBtn" disabled>
+                    <i class="fa fa-paper-plane"></i> Send OTP to Email
+                </button>
+            </form>
+        </div>
+        
+        <!-- Step 2: OTP Verification -->
+        <div id="adminOtpStep" style="display:none;">
+            <div style="text-align:center;margin-bottom:20px;">
+                <div style="width:56px;height:56px;background:rgba(79,142,247,0.12);border:2px solid rgba(79,142,247,0.25);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">
+                    <i class="fa fa-envelope-circle-check" style="font-size:1.4rem;color:#4f8ef7;"></i>
+                </div>
+                <h2 style="font-family:'Syne',sans-serif;font-size:1rem;font-weight:700;margin-bottom:6px;color:var(--text);">Verify Your Email</h2>
+                <p style="font-size:0.78rem;color:var(--text2);margin:0;">Enter the 6-digit code sent to</p>
+                <p style="font-size:0.82rem;color:var(--accent);font-weight:600;margin:4px 0 0;" id="otpEmailDisplay"></p>
+            </div>
+            <form id="otpVerifyForm">
+                <div style="text-align:center;margin-bottom:16px;">
+                    <label style="display:block;font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px;">Verification Code</label>
+                    <input type="text" id="otp_code" name="otp_code" class="form-control" 
+                           placeholder="000000" maxlength="6" required 
+                           autocomplete="one-time-code" 
+                           style="display:block;width:180px;margin:0 auto;text-align:center;font-size:1.4rem;letter-spacing:10px;font-weight:700;padding:10px 12px;"
+                           oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0,6)">
+                </div>
+                <p style="font-size:0.7rem;color:var(--text3);text-align:center;margin-bottom:16px;">Code expires in <strong id="otpTimer" style="color:var(--accent);">10:00</strong></p>
+                <div class="alert alert-error" id="otpError" style="display:none;margin-bottom:14px;"></div>
+                <button type="submit" class="btn-submit blue" style="margin-bottom:12px;">
+                    <i class="fa fa-check"></i> Verify & Create Admin
+                </button>
+                <div style="text-align:center;font-size:0.78rem;color:var(--text3);">
+                    Didn't receive code? 
+                    <button type="button" id="resendOtpBtn" onclick="resendOtp()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-family:'DM Sans',sans-serif;font-size:0.78rem;">
+                        Resend
+                    </button>
+                    <span style="margin:0 8px;">|</span>
+                    <button type="button" onclick="backToAdminForm()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-family:'DM Sans',sans-serif;font-size:0.78rem;">
+                        <i class="fa fa-arrow-left"></i> Back
+                    </button>
+                </div>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -653,7 +878,7 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
     <div class="modal">
         <button class="modal-close" onclick="closeModal('addUserModal')"><i class="fa fa-xmark"></i></button>
         <h3><i class="fa fa-user-plus" style="color:var(--accent);"></i> Add New Customer</h3>
-        <form method="POST">
+        <form method="POST" id="addUserForm">
             <div class="form-grid">
                 <div class="form-group full">
                     <label>Full Name <span class="req">*</span></label>
@@ -661,11 +886,17 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
                 </div>
                 <div class="form-group full">
                     <label>Email Address <span class="req">*</span></label>
-                    <input type="email" name="new_email" class="form-control" placeholder="user@email.com" required>
+                    <input type="email" name="new_email" id="new_email" class="form-control" placeholder="user@email.com" required>
+                    <span class="form-hint">A verification email will be sent to this address</span>
                 </div>
                 <div class="form-group full">
                     <label>Password <span class="req">*</span></label>
-                    <input type="password" name="new_password" class="form-control" placeholder="Set a password" required>
+                    <input type="password" name="new_password" id="new_password" class="form-control" placeholder="Set a password" minlength="6" required>
+                    <span class="form-hint">Minimum 6 characters</span>
+                </div>
+                <div class="form-group full">
+                    <label>Confirm Password <span class="req">*</span></label>
+                    <input type="password" id="new_confirm_password" class="form-control" placeholder="Repeat password" required>
                 </div>
                 <div class="form-group">
                     <label>Contact No</label>
@@ -680,6 +911,7 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
                     <input type="text" name="new_country" class="form-control" placeholder="Sri Lanka">
                 </div>
             </div>
+            <div class="pwd-error" id="addUserPwdErr"><i class="fa fa-triangle-exclamation"></i> Passwords do not match.</div>
             <button type="submit" name="add_user" class="btn-submit blue">
                 <i class="fa fa-plus"></i> Create Account
             </button>
@@ -692,7 +924,7 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
     <div class="modal">
         <button class="modal-close" onclick="closeModal('editUserModal')"><i class="fa fa-xmark"></i></button>
         <h3><i class="fa fa-user-pen" style="color:#f59e0b;"></i> Edit Customer</h3>
-        <form method="POST">
+        <form method="POST" id="editUserForm">
             <input type="hidden" name="edit_id" id="edit_id">
             <div class="form-grid">
                 <div class="form-group full">
@@ -702,6 +934,12 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
                 <div class="form-group full">
                     <label>Email Address <span class="req">*</span></label>
                     <input type="email" name="email" id="edit_email" class="form-control" required>
+                </div>
+                <div class="form-group full">
+                    <label style="display:flex;align-items:center;gap:8px;">
+                        <input type="checkbox" name="email_verified" id="edit_email_verified" style="width:16px;height:16px;accent-color:var(--accent);">
+                        <span>Email Verified</span>
+                    </label>
                 </div>
                 <div class="form-group">
                     <label>Contact No</label>
@@ -731,7 +969,18 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
         <h3><i class="fa fa-id-card" style="color:var(--accent);"></i> Customer Profile</h3>
         <div class="view-avatar"><?php echo strtoupper(substr($view_user['full_name'], 0, 1)); ?></div>
         <div class="view-name"><?php echo htmlspecialchars($view_user['full_name']); ?></div>
-        <div class="view-email"><?php echo htmlspecialchars($view_user['email']); ?></div>
+        <div class="view-email">
+            <?php echo htmlspecialchars($view_user['email']); ?>
+            <?php if (!empty($view_user['email_verified'])): ?>
+                <span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:0.7rem;color:#22c55e;background:rgba(34,197,94,0.1);padding:2px 8px;border-radius:10px;">
+                    <i class="fa fa-circle-check"></i> Verified
+                </span>
+            <?php else: ?>
+                <span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:0.7rem;color:#f59e0b;background:rgba(245,158,11,0.1);padding:2px 8px;border-radius:10px;">
+                    <i class="fa fa-circle-exclamation"></i> Not Verified
+                </span>
+            <?php endif; ?>
+        </div>
         <div class="view-stats">
             <div class="stat-box">
                 <div class="snum"><?php echo $view_user['total_bookings']; ?></div>
@@ -754,6 +1003,7 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
             data-id="<?php echo $view_user['id']; ?>"
             data-fullname="<?php echo htmlspecialchars($view_user['full_name'], ENT_QUOTES); ?>"
             data-email="<?php echo htmlspecialchars($view_user['email'], ENT_QUOTES); ?>"
+            data-email-verified="<?php echo $view_user['email_verified'] ?? 0; ?>"
             data-contact="<?php echo htmlspecialchars($view_user['contact_no'] ?? '', ENT_QUOTES); ?>"
             data-city="<?php echo htmlspecialchars($view_user['city'] ?? '', ENT_QUOTES); ?>"
             data-country="<?php echo htmlspecialchars($view_user['country'] ?? '', ENT_QUOTES); ?>"
@@ -785,6 +1035,16 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
     });
     function syncIcon(){ document.getElementById('themeIcon').className = theme==='dark'?'fa fa-moon':'fa fa-sun'; }
 
+    // Mobile sidebar
+    document.getElementById('hamburgerBtn').addEventListener('click', function(){
+        document.querySelector('.sidebar').classList.toggle('open');
+        document.getElementById('sidebarOverlay').classList.toggle('open');
+    });
+    document.getElementById('sidebarOverlay').addEventListener('click', function(){
+        document.querySelector('.sidebar').classList.remove('open');
+        this.classList.remove('open');
+    });
+
     // Modal helpers
     function openModal(id){ document.getElementById(id).classList.add('open'); }
     function closeModal(id){
@@ -810,7 +1070,8 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
     function openEditUserModal(btn){
         var d = (btn instanceof HTMLElement) ? {
             id:btn.dataset.id, full_name:btn.dataset.fullname, email:btn.dataset.email,
-            contact_no:btn.dataset.contact, city:btn.dataset.city, country:btn.dataset.country
+            contact_no:btn.dataset.contact, city:btn.dataset.city, country:btn.dataset.country,
+            email_verified:btn.dataset.emailVerified
         } : btn;
         document.getElementById('edit_id').value           = d.id;
         document.getElementById('edit_full_name').value    = d.full_name  || '';
@@ -818,6 +1079,7 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
         document.getElementById('edit_contact_no').value   = d.contact_no || '';
         document.getElementById('edit_city').value         = d.city       || '';
         document.getElementById('edit_country').value      = d.country    || '';
+        document.getElementById('edit_email_verified').checked = d.email_verified == '1';
         openModal('editUserModal');
     }
 
@@ -830,11 +1092,261 @@ $user_total  = $resUser  ? $resUser->num_rows  : 0;
         else { err.style.display='none'; }
     });
 
-    // Password match — add admin
-    document.querySelector('#addAdminModal form').addEventListener('submit', function(e){
-        var p=this.querySelector('[name="admin_password"]').value;
-        var c=document.getElementById('admin_confirm_pwd').value;
-        var err=document.getElementById('adminAddPwdErr');
+    // ─── ADD ADMIN OTP FLOW ────────────────────────────────────────────────
+    var usernameAvailable = false;
+    var passwordValid = false;
+    var otpTimerInterval = null;
+    var otpTimeLeft = 600;
+
+    function checkUsername(username) {
+        var status = document.getElementById('usernameStatus');
+        var hint = document.getElementById('usernameHint');
+        if (username.length < 3) {
+            status.innerHTML = '';
+            hint.textContent = 'At least 3 characters';
+            usernameAvailable = false;
+            updateSendBtn();
+            return;
+        }
+        status.innerHTML = '<i class="fa fa-spinner fa-spin" style="color:var(--text3);"></i>';
+        fetch('reg-users.php?check_username=' + encodeURIComponent(username))
+            .then(r => r.json())
+            .then(data => {
+                if (data.available) {
+                    status.innerHTML = '<i class="fa fa-check-circle" style="color:#22c55e;"></i>';
+                    hint.textContent = data.message;
+                    hint.style.color = '#22c55e';
+                    usernameAvailable = true;
+                } else {
+                    status.innerHTML = '<i class="fa fa-times-circle" style="color:#ef4444;"></i>';
+                    hint.textContent = data.message;
+                    hint.style.color = '#ef4444';
+                    usernameAvailable = false;
+                }
+                updateSendBtn();
+            });
+    }
+
+    function validatePasswordStrength(password) {
+        var hint = document.getElementById('passwordHint');
+        var strongRegex = new RegExp("^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$");
+        var hasLength = password.length >= 8;
+        var hasUpper = /[A-Z]/.test(password);
+        var hasLower = /[a-z]/.test(password);
+        var hasNumber = /\d/.test(password);
+        var hasSpecial = /[@$!%*?&]/.test(password);
+        
+        if (password.length === 0) {
+            hint.textContent = '';
+            passwordValid = false;
+        } else if (strongRegex.test(password)) {
+            hint.textContent = 'Strong password';
+            hint.style.color = '#22c55e';
+            passwordValid = true;
+        } else {
+            var issues = [];
+            if (!hasLength) issues.push('8+ chars');
+            if (!hasUpper) issues.push('uppercase');
+            if (!hasLower) issues.push('lowercase');
+            if (!hasNumber) issues.push('number');
+            if (!hasSpecial) issues.push('special (@$!%*?&)');
+            hint.textContent = 'Missing: ' + issues.join(', ');
+            hint.style.color = '#ef4444';
+            passwordValid = false;
+        }
+        updateSendBtn();
+    }
+
+    function updateSendBtn() {
+        var btn = document.getElementById('sendOtpBtn');
+        var pwd = document.getElementById('admin_password').value;
+        var confirmPwd = document.getElementById('admin_confirm_pwd').value;
+        var pwdMatch = pwd === confirmPwd && pwd.length > 0;
+        
+        if (usernameAvailable && passwordValid && pwdMatch) {
+            btn.disabled = false;
+        } else {
+            btn.disabled = true;
+        }
+    }
+
+    document.getElementById('admin_password').addEventListener('input', updateSendBtn);
+    document.getElementById('admin_confirm_pwd').addEventListener('input', updateSendBtn);
+
+    document.getElementById('adminRegForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        var errBox = document.getElementById('adminFormError');
+        var pwd = document.getElementById('admin_password').value;
+        var confirmPwd = document.getElementById('admin_confirm_pwd').value;
+        
+        if (!usernameAvailable) {
+            errBox.textContent = 'Please choose a unique username.';
+            errBox.style.display = 'flex';
+            return;
+        }
+        if (!passwordValid) {
+            errBox.textContent = 'Password does not meet complexity requirements.';
+            errBox.style.display = 'flex';
+            return;
+        }
+        if (pwd !== confirmPwd) {
+            document.getElementById('adminAddPwdErr').style.display = 'flex';
+            return;
+        }
+        
+        errBox.style.display = 'none';
+        document.getElementById('adminAddPwdErr').style.display = 'none';
+        document.getElementById('sendOtpBtn').innerHTML = '<i class="fa fa-spinner fa-spin"></i> Sending...';
+        document.getElementById('sendOtpBtn').disabled = true;
+        
+        var formData = new FormData();
+        formData.append('send_admin_otp', '1');
+        formData.append('username', document.getElementById('admin_username').value);
+        formData.append('email', document.getElementById('admin_email').value);
+        formData.append('password', pwd);
+        
+        fetch('reg-users.php', { 
+            method: 'POST', 
+            body: formData,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('otpEmailDisplay').textContent = document.getElementById('admin_email').value;
+                    document.getElementById('adminFormStep').style.display = 'none';
+                    document.getElementById('adminOtpStep').style.display = 'block';
+                    startOtpTimer();
+                } else {
+                    errBox.textContent = data.message;
+                    errBox.style.display = 'flex';
+                    document.getElementById('sendOtpBtn').innerHTML = '<i class="fa fa-paper-plane"></i> Send OTP to Email';
+                    document.getElementById('sendOtpBtn').disabled = false;
+                }
+            });
+    });
+
+    document.getElementById('otpVerifyForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        var errBox = document.getElementById('otpError');
+        var otpInput = document.getElementById('otp_code');
+        var submitBtn = this.querySelector('button[type="submit"]');
+        
+        var formData = new FormData();
+        formData.append('verify_admin_otp', '1');
+        formData.append('otp_code', otpInput.value);
+        
+        submitBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Verifying...';
+        submitBtn.disabled = true;
+        errBox.style.display = 'none';
+        
+        fetch('reg-users.php', { 
+            method: 'POST', 
+            body: formData,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    closeModal('addAdminModal');
+                    document.getElementById('successMsg').textContent = 'Admin account created successfully!';
+                    document.getElementById('successMsg').style.display = 'flex';
+                    setTimeout(function() {
+                        var el = document.getElementById('successMsg');
+                        el.style.transition = 'opacity 0.5s ease';
+                        el.style.opacity = '0';
+                        setTimeout(function() { el.style.display = 'none'; }, 500);
+                    }, 3000);
+                } else {
+                    errBox.textContent = data.message;
+                    errBox.style.display = 'flex';
+                    submitBtn.innerHTML = '<i class="fa fa-check"></i> Verify & Create Admin';
+                    submitBtn.disabled = false;
+                    otpInput.value = '';
+                    otpInput.focus();
+                }
+            });
+    });
+
+    function startOtpTimer() {
+        otpTimeLeft = 600;
+        clearInterval(otpTimerInterval);
+        otpTimerInterval = setInterval(function() {
+            otpTimeLeft--;
+            var mins = Math.floor(otpTimeLeft / 60);
+            var secs = otpTimeLeft % 60;
+            document.getElementById('otpTimer').textContent = mins + ':' + (secs < 10 ? '0' : '') + secs;
+            if (otpTimeLeft <= 0) {
+                clearInterval(otpTimerInterval);
+                document.getElementById('otpTimer').textContent = '0:00';
+            }
+        }, 1000);
+    }
+
+    function resendOtp() {
+        var btn = document.getElementById('resendOtpBtn');
+        var errBox = document.getElementById('otpError');
+        btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Sending...';
+        btn.disabled = true;
+        errBox.style.display = 'none';
+        
+        var formData = new FormData();
+        formData.append('resend_admin_otp', '1');
+        
+        fetch('reg-users.php', { 
+            method: 'POST', 
+            body: formData,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    startOtpTimer();
+                    errBox.textContent = 'New OTP sent to your email.';
+                    errBox.className = 'alert alert-success';
+                    errBox.style.display = 'flex';
+                    setTimeout(function() { errBox.style.display = 'none'; }, 3000);
+                } else {
+                    errBox.textContent = data.message;
+                    errBox.className = 'alert alert-error';
+                    errBox.style.display = 'flex';
+                }
+                btn.innerHTML = 'Resend';
+                btn.disabled = false;
+            });
+    }
+
+    function backToAdminForm() {
+        document.getElementById('adminFormStep').style.display = 'block';
+        document.getElementById('adminOtpStep').style.display = 'none';
+        clearInterval(otpTimerInterval);
+    }
+
+    function closeAdminModal() {
+        closeModal('addAdminModal');
+        backToAdminForm();
+        document.getElementById('admin_username').value = '';
+        document.getElementById('admin_email').value = '';
+        document.getElementById('admin_password').value = '';
+        document.getElementById('admin_confirm_pwd').value = '';
+        document.getElementById('otp_code').value = '';
+        document.getElementById('usernameStatus').innerHTML = '';
+        document.getElementById('usernameHint').textContent = 'At least 3 characters';
+        document.getElementById('usernameHint').style.color = '';
+        document.getElementById('passwordHint').textContent = '';
+        document.getElementById('adminFormError').style.display = 'none';
+        document.getElementById('otpError').style.display = 'none';
+        document.getElementById('sendOtpBtn').innerHTML = '<i class="fa fa-paper-plane"></i> Send OTP to Email';
+        document.getElementById('sendOtpBtn').disabled = true;
+        usernameAvailable = false;
+        passwordValid = false;
+    }
+
+    // Password match — add user
+    document.querySelector('#addUserForm').addEventListener('submit', function(e){
+        var p=document.getElementById('new_password').value;
+        var c=document.getElementById('new_confirm_password').value;
+        var err=document.getElementById('addUserPwdErr');
         if(p!==c){ e.preventDefault(); err.style.display='flex'; }
         else { err.style.display='none'; }
     });

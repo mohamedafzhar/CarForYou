@@ -5,11 +5,30 @@ require_once('admin/config.php');
 $car_id = intval($_GET['id'] ?? 0);
 if (!$car_id) { header("Location: index.php"); exit(); }
 
-$stmt = $conn->prepare("SELECT * FROM cars WHERE id = ? AND status = 'Available'");
+$stmt = $conn->prepare("SELECT * FROM cars WHERE id = ?");
 $stmt->bind_param("i", $car_id);
 $stmt->execute();
 $car = $stmt->get_result()->fetch_assoc();
 if (!$car) { header("Location: index.php"); exit(); }
+
+// Check if car is available for booking
+$is_available = ($car['status'] === 'Available');
+$is_booked = ($car['status'] === 'Booked');
+
+// Get current booking info if booked
+$current_booking = null;
+if ($is_booked) {
+    $bk_stmt = $conn->prepare("
+        SELECT from_date, to_date FROM booking 
+        WHERE car_id = ? AND status IN ('confirmed', 'awaiting_payment') 
+        AND to_date >= CURDATE() 
+        ORDER BY from_date ASC LIMIT 1
+    ");
+    $bk_stmt->bind_param("i", $car_id);
+    $bk_stmt->execute();
+    $current_booking = $bk_stmt->get_result()->fetch_assoc();
+    $bk_stmt->close();
+}
 
 // ── Build image array from all 4 DB slots, fall back to stock only if empty ───
 $stock_fallback = "https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?auto=format&fit=crop&q=80&w=1200";
@@ -51,6 +70,7 @@ $similar = $sim_res->get_result();
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo $car_name; ?> | CarForYou</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%230d1117' width='100' height='100' rx='20'/><path d='M20 55 L25 45 L40 40 L60 40 L75 45 L80 55 L80 60 L20 60 Z' fill='none' stroke='%234f8ef7' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/><circle cx='30' cy='62' r='6' fill='%234f8ef7'/><circle cx='70' cy='62' r='6' fill='%234f8ef7'/><path d='M28 50 L30 45 L35 42 L65 42 L70 45 L72 50' fill='none' stroke='%234f8ef7' stroke-width='2' stroke-linecap='round'/></svg>">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;0,700;1,300;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 
@@ -260,7 +280,18 @@ $similar = $sim_res->get_result();
     .btn-primary:hover { transform:translateY(-2px); box-shadow:0 8px 30px var(--accent-glow); }
     .btn-outline { background:transparent; color:var(--text); border:1px solid var(--border2); }
     .btn-outline:hover { border-color:var(--accent); color:var(--accent); background:var(--gold-dim); }
-
+    
+    .booked-notice {
+        display:flex; align-items:center; gap:14px;
+        background:rgba(251,191,36,0.1); border:1px solid rgba(251,191,36,0.25);
+        border-radius:8px; padding:14px 20px;
+        color:var(--amber);
+    }
+    .booked-notice i { font-size:1.4rem; }
+    .booked-notice div { display:flex; flex-direction:column; gap:2px; }
+    .booked-notice strong { font-size:0.88rem; font-weight:700; color:var(--amber); }
+    .booked-notice span { font-size:0.78rem; color:var(--text2); }
+    
     /* ═══════════════════════════════════════
        DETAILS SECTION
     ═══════════════════════════════════════ */
@@ -407,14 +438,28 @@ $similar = $sim_res->get_result();
         </div>
         <div class="hero-price">LKR <?php echo $price; ?> <span>/ day</span></div>
         <div class="hero-btns">
-            <?php if (isset($_SESSION['user_id'])): ?>
-                <a href="users/booking.php?car_id=<?php echo $car_id; ?>" class="btn btn-primary">
-                    <i class="fa fa-calendar-check"></i> Book Now
-                </a>
+            <?php if ($is_available): ?>
+                <?php if (isset($_SESSION['user_id'])): ?>
+                    <a href="users/booking.php?car_id=<?php echo $car_id; ?>" class="btn btn-primary">
+                        <i class="fa fa-calendar-check"></i> Book Now
+                    </a>
+                <?php else: ?>
+                    <a href="users/login.php?redirect=car_detail.php%3Fid%3D<?php echo $car_id; ?>" class="btn btn-primary">
+                        <i class="fa fa-calendar-check"></i> Book Now
+                    </a>
+                <?php endif; ?>
             <?php else: ?>
-                <a href="users/login.php?redirect=car_detail.php%3Fid%3D<?php echo $car_id; ?>" class="btn btn-primary">
-                    <i class="fa fa-calendar-check"></i> Book Now
-                </a>
+                <div class="booked-notice">
+                    <i class="fa fa-calendar-clock"></i>
+                    <div>
+                        <strong>Currently Reserved</strong>
+                        <?php if ($current_booking): ?>
+                        <span>Available after <?php echo date('d M Y', strtotime($current_booking['to_date'])); ?></span>
+                        <?php else: ?>
+                        <span>Returning soon</span>
+                        <?php endif; ?>
+                    </div>
+                </div>
             <?php endif; ?>
             <a href="#details" class="btn btn-outline"><i class="fa fa-info-circle"></i> Full Details</a>
         </div>

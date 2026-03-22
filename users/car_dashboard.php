@@ -1,11 +1,7 @@
 <?php
 session_start();
 require_once('../includes/config.php');
-
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
-    exit();
-}
+userAuth();
 
 $user_id   = $_SESSION['user_id'];
 $user_name = $_SESSION['user_name'] ?? $_SESSION['fname'] ?? 'User';
@@ -20,16 +16,16 @@ $stmt = $conn->prepare("SELECT COUNT(*) AS total FROM booking WHERE user_email =
 $stmt->bind_param("s", $user_email); $stmt->execute();
 $total_bookings = $stmt->get_result()->fetch_assoc()['total'] ?? 0;
 
-$stmt = $conn->prepare("SELECT COUNT(*) AS active FROM booking WHERE user_email = ? AND status = 1");
+$stmt = $conn->prepare("SELECT COUNT(*) AS active FROM booking WHERE user_email = ? AND status IN (1, 'confirmed', 'Confirmed')");
 $stmt->bind_param("s", $user_email); $stmt->execute();
 $active_rentals = $stmt->get_result()->fetch_assoc()['active'] ?? 0;
 
-$stmt = $conn->prepare("SELECT COUNT(*) AS pending FROM booking WHERE user_email = ? AND status = 0");
+$stmt = $conn->prepare("SELECT COUNT(*) AS pending FROM booking WHERE user_email = ? AND status IN (0, 'Pending', 'pending', 'awaiting_payment')");
 $stmt->bind_param("s", $user_email); $stmt->execute();
 $pending_bookings = $stmt->get_result()->fetch_assoc()['pending'] ?? 0;
 
 $stmt = $conn->prepare("
-    SELECT b.id, b.from_date, b.to_date, b.status,
+    SELECT b.id, b.from_date, b.to_date, b.status, b.return_status,
            c.car_name, c.car_type, c.Vimage1
     FROM booking b
     JOIN cars c ON c.id = b.car_id
@@ -47,6 +43,7 @@ $bookings_result = $stmt->get_result();
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Dashboard | CarForYou</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%230d1117' width='100' height='100' rx='20'/><path d='M20 55 L25 45 L40 40 L60 40 L75 45 L80 55 L80 60 L20 60 Z' fill='none' stroke='%2300d4ff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/><circle cx='30' cy='62' r='6' fill='%2300d4ff'/><circle cx='70' cy='62' r='6' fill='%2300d4ff'/><path d='M28 50 L30 45 L35 42 L65 42 L70 45 L72 50' fill='none' stroke='%2300d4ff' stroke-width='2' stroke-linecap='round'/></svg>">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 
@@ -128,9 +125,10 @@ $bookings_result = $stmt->get_result();
     .wb-btn:hover { opacity:0.88; transform:translateY(-1px); }
 
     .stats-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:22px; }
-    .sc { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:20px; display:flex; align-items:center; gap:16px; position:relative; overflow:hidden; opacity:0; animation:fadeUp 0.5s ease forwards; transition:transform 0.22s, box-shadow 0.22s; cursor:default; }
+    .sc-link { text-decoration:none; display:block; }
+    .sc { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:20px; display:flex; align-items:center; gap:16px; position:relative; overflow:hidden; opacity:0; animation:fadeUp 0.5s ease forwards; transition:transform 0.22s, box-shadow 0.22s, border-color 0.22s; cursor:pointer; }
     .sc::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,var(--accent),var(--accent2)); transform:scaleX(0); transform-origin:left; transition:transform 0.3s ease; }
-    .sc:hover { transform:translateY(-3px); box-shadow:var(--shadow); }
+    .sc:hover { transform:translateY(-3px); box-shadow:var(--shadow); border-color:var(--accent); }
     .sc:hover::before { transform:scaleX(1); }
     .sc:nth-child(1){animation-delay:0.1s} .sc:nth-child(2){animation-delay:0.16s} .sc:nth-child(3){animation-delay:0.22s}
     .sc-icon { width:46px; height:46px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:1.05rem; flex-shrink:0; transition:transform 0.22s; }
@@ -234,18 +232,18 @@ $bookings_result = $stmt->get_result();
             <a href="../index.php" class="wb-btn"><i class="fa fa-car-side"></i> Browse Cars</a>
         </div>
         <div class="stats-grid">
-            <div class="sc">
+            <a href="user_booking.php" class="sc-link"><div class="sc">
                 <div class="sc-icon" style="background:var(--accentbg);color:var(--accent);"><i class="fa fa-receipt"></i></div>
                 <div><div class="sc-num"><?php echo $total_bookings; ?></div><div class="sc-lbl">Total Bookings</div></div>
-            </div>
-            <div class="sc">
+            </div></a>
+            <a href="user_booking.php?filter=confirmed" class="sc-link"><div class="sc">
                 <div class="sc-icon" style="background:var(--greenbg);color:var(--green);"><i class="fa fa-circle-check"></i></div>
                 <div><div class="sc-num"><?php echo $active_rentals; ?></div><div class="sc-lbl">Confirmed</div></div>
-            </div>
-            <div class="sc">
+            </div></a>
+            <a href="user_booking.php?filter=pending" class="sc-link"><div class="sc">
                 <div class="sc-icon" style="background:var(--amberbg);color:var(--amber);"><i class="fa fa-clock"></i></div>
                 <div><div class="sc-num"><?php echo $pending_bookings; ?></div><div class="sc-lbl">Pending</div></div>
-            </div>
+            </div></a>
         </div>
         <div class="content-grid">
             <div class="card">
@@ -259,9 +257,13 @@ $bookings_result = $stmt->get_result();
                     <?php if ($bookings_result && $bookings_result->num_rows > 0):
                         while ($b = $bookings_result->fetch_assoc()):
                             $img = !empty($b['Vimage1']) ? "../admin/img/vehicleimages/" . htmlspecialchars($b['Vimage1']) : "https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=80&q=60";
-                            $status = intval($b['status']);
-                            if ($status===1){$bc='badge-confirmed';$bt='Confirmed';}
-                            elseif($status===2){$bc='badge-cancelled';$bt='Cancelled';}
+                            $st = $b['status'];
+                            $is_returned = ($b['return_status'] === 'returned');
+                            $is_awaiting = ($st === 'awaiting_payment');
+                            if ($is_returned){$bc='badge-confirmed';$bt='Returned';}
+                            elseif ($is_awaiting){$bc='badge-pending';$bt='Awaiting Payment';}
+                            elseif ($st == 1 || $st === 'confirmed' || $st === 'Confirmed'){$bc='badge-confirmed';$bt='Confirmed';}
+                            elseif ($st == 2 || $st === 'cancelled' || $st === 'Cancelled'){$bc='badge-cancelled';$bt='Cancelled';}
                             else{$bc='badge-pending';$bt='Pending';}
                     ?>
                     <tr>

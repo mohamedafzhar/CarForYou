@@ -1,15 +1,7 @@
 <?php
-/**
- * users/testimonial.php
- * User submits a star rating + review for a returned booking.
- * Only accessible if booking status = 3 (Returned) and no review yet submitted.
- */
 session_start();
 require_once('../includes/config.php');
-
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php"); exit();
-}
+userAuth();
 
 $user_id   = $_SESSION['user_id'];
 $user_name = $_SESSION['user_name'] ?? $_SESSION['fname'] ?? 'User';

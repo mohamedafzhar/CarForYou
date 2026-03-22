@@ -1,11 +1,7 @@
 <?php
 session_start();
 require_once('../includes/config.php');
-
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php?error=Please login first");
-    exit();
-}
+userAuth('login.php?error=Please login first');
 
 $user_id = $_SESSION['user_id'];
 
@@ -34,6 +30,9 @@ $user_country = $user['country'] ?? '';
 $user_address = $user['address'] ?? '';
 $user_dob     = !empty($user['dob']) ? date('d M Y', strtotime($user['dob'])) : 'Not provided';
 $location     = trim($user_city . ($user_city && $user_country ? ', ' : '') . $user_country);
+$profile_pic  = $user['profile_picture'] ?? '';
+$has_pic      = !empty($profile_pic);
+$profile_pic_path = $has_pic ? '../' . $profile_pic : '';
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
@@ -100,8 +99,11 @@ $location     = trim($user_city . ($user_city && $user_country ? ', ' : '') . $u
     .profile-summary{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;position:sticky;top:82px;}
     .ps-header{padding:32px 24px 20px;background:linear-gradient(160deg,var(--accentbg),transparent);border-bottom:1px solid var(--border);text-align:center;position:relative;}
     .ps-header::after{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--accent),var(--accent2));}
-    .ps-avatar{width:80px;height:80px;margin:0 auto 14px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:2rem;font-weight:800;color:#fff;box-shadow:0 0 0 4px var(--surface),0 0 0 6px var(--border2),0 0 24px var(--accentglow);position:relative;}
+    .ps-avatar{width:80px;height:80px;margin:0 auto 14px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:2rem;font-weight:800;color:#fff;box-shadow:0 0 0 4px var(--surface),0 0 0 6px var(--border2),0 0 24px var(--accentglow);position:relative;overflow:hidden;}
     .ps-avatar .online-ring{position:absolute;bottom:3px;right:3px;width:14px;height:14px;border-radius:50%;background:var(--green);border:2px solid var(--surface);}
+    .ps-avatar img{width:100%;height:100%;object-fit:cover;border-radius:50%;}
+    .ps-avatar-edit{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:#fff;font-size:0.6rem;padding:4px;text-align:center;cursor:pointer;opacity:0;transition:opacity 0.2s;}
+    .ps-avatar:hover .ps-avatar-edit{opacity:1;}
     .ps-name{font-size:1rem;font-weight:800;color:var(--text);margin-bottom:4px;}
     .ps-email{font-size:0.75rem;color:var(--text3);margin-bottom:12px;}
     .ps-role-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-size:0.64rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;background:var(--greenbg);color:var(--green);border:1px solid rgba(0,230,118,0.18);}
@@ -184,7 +186,17 @@ $location     = trim($user_city . ($user_city && $user_country ? ', ' : '') . $u
             <!-- LEFT: Summary -->
             <div class="profile-summary">
                 <div class="ps-header">
-                    <div class="ps-avatar"><?php echo $initial; ?><span class="online-ring"></span></div>
+                    <div class="ps-avatar" id="psAvatar">
+                        <?php if ($has_pic): ?>
+                            <img src="<?php echo htmlspecialchars($profile_pic_path); ?>?t=<?php echo time(); ?>" alt="Profile Picture" id="avatarImg">
+                        <?php else: ?>
+                            <span id="avatarInitial"><?php echo $initial; ?></span>
+                        <?php endif; ?>
+                        <span class="online-ring"></span>
+                        <span class="ps-avatar-edit" onclick="document.getElementById('profilePicInput').click()">
+                            <i class="fa fa-camera"></i> Change
+                        </span>
+                    </div>
                     <div class="ps-name"><?php echo htmlspecialchars($user_name); ?></div>
                     <div class="ps-email"><?php echo htmlspecialchars($user_email); ?></div>
                     <span class="ps-role-badge"><?php echo htmlspecialchars($user_role); ?></span>
@@ -268,12 +280,52 @@ $location     = trim($user_city . ($user_city && $user_country ? ', ' : '') . $u
         </div>
     </div>
 </div>
+<input type="file" id="profilePicInput" accept="image/*" style="display:none;">
 <script>
     (function(){var d=new Date(),days=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'],mo=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];document.getElementById('dateLabel').textContent=days[d.getDay()]+', '+d.getDate()+' '+mo[d.getMonth()]+' '+d.getFullYear();})();
     var theme=localStorage.getItem('cfyTheme')||'dark';
     document.documentElement.setAttribute('data-theme',theme);syncIcon();
     document.getElementById('themeBtn').addEventListener('click',function(){theme=theme==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',theme);localStorage.setItem('cfyTheme',theme);syncIcon();});
     function syncIcon(){document.getElementById('themeIcon').className=theme==='dark'?'fa fa-moon':'fa fa-sun';}
+    
+    // Profile Picture Upload
+    document.getElementById('profilePicInput')?.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const formData = new FormData();
+        formData.append('profile_image', file);
+        
+        fetch('../upload_profile_image.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                const avatar = document.getElementById('psAvatar');
+                const initial = document.getElementById('avatarInitial');
+                const img = document.getElementById('avatarImg');
+                
+                if (initial) initial.remove();
+                const newSrc = '../' + data.path + '?t=' + Date.now();
+                if (!img) {
+                    const newImg = document.createElement('img');
+                    newImg.id = 'avatarImg';
+                    newImg.src = newSrc;
+                    avatar.insertBefore(newImg, avatar.firstChild);
+                } else {
+                    img.src = newSrc;
+                }
+            } else {
+                alert('Upload failed: ' + data.error);
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            alert('Upload failed');
+        });
+    });
 </script>
 </body>
 </html>

@@ -1,11 +1,7 @@
 <?php
 session_start();
 require_once('../includes/config.php');
-
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php?error=Please login first");
-    exit();
-}
+userAuth('login.php?error=Please login first');
 
 $user_id     = $_SESSION['user_id'];
 $user_name_s = $_SESSION['user_name'] ?? $_SESSION['fname'] ?? 'User';
@@ -63,6 +59,9 @@ if (isset($_POST['update_profile'])) {
 $user_name  = $columns['name']  ? $user[$columns['name']]  : '';
 $user_email = $columns['email'] ? $user[$columns['email']] : '';
 $user_phone = $columns['phone'] ? $user[$columns['phone']] : '';
+$profile_pic = $user['profile_picture'] ?? '';
+$has_pic = !empty($profile_pic);
+$profile_pic_path = $has_pic ? '../' . $profile_pic : '';
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
@@ -284,9 +283,24 @@ $user_phone = $columns['phone'] ? $user[$columns['phone']] : '';
         display:flex; align-items:center; justify-content:center;
         font-size:1.6rem; font-weight:800; color:#fff;
         box-shadow:0 0 20px var(--accentglow);
+        position:relative; overflow:hidden;
     }
+    .avatar-circle img{width:100%;height:100%;object-fit:cover;border-radius:16px;}
+    .avatar-edit-btn{
+        position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);
+        color:#fff;font-size:0.55rem;padding:3px;text-align:center;cursor:pointer;
+        opacity:0;transition:opacity 0.2s;
+    }
+    .avatar-circle:hover .avatar-edit-btn{opacity:1;}
     .avatar-info h3 { font-size:1rem; font-weight:700; color:var(--text); }
     .avatar-info p  { font-size:0.75rem; color:var(--text3); margin-top:3px; }
+    .avatar-info .change-photo{
+        display:inline-flex;align-items:center;gap:6px;
+        padding:6px 14px;border-radius:8px;font-size:0.72rem;font-weight:600;
+        border:1px solid var(--border2);color:var(--text2);cursor:pointer;
+        transition:all 0.2s;margin-top:8px;
+    }
+    .avatar-info .change-photo:hover{border-color:var(--accent);color:var(--accent);background:var(--accentbg);}
 
     /* ── FIELDS ── */
     .field { margin-bottom:18px; }
@@ -424,10 +438,22 @@ $user_phone = $columns['phone'] ? $user[$columns['phone']] : '';
 
             <!-- Avatar preview -->
             <div class="avatar-block">
-                <div class="avatar-circle"><?php echo $initial; ?></div>
+                <div class="avatar-circle" id="editAvatarCircle">
+                    <?php if ($has_pic): ?>
+                        <img src="<?php echo htmlspecialchars($profile_pic_path); ?>?t=<?php echo time(); ?>" alt="Profile Picture" id="editAvatarImg">
+                    <?php else: ?>
+                        <span id="editAvatarInitial"><?php echo $initial; ?></span>
+                    <?php endif; ?>
+                    <span class="avatar-edit-btn" onclick="document.getElementById('editProfilePicInput').click()">
+                        <i class="fa fa-camera"></i>
+                    </span>
+                </div>
                 <div class="avatar-info">
                     <h3><?php echo htmlspecialchars($user_name); ?></h3>
                     <p><?php echo htmlspecialchars($user_email); ?></p>
+                    <label class="change-photo" onclick="document.getElementById('editProfilePicInput').click()">
+                        <i class="fa fa-image"></i> Change Photo
+                    </label>
                 </div>
             </div>
 
@@ -477,7 +503,7 @@ $user_phone = $columns['phone'] ? $user[$columns['phone']] : '';
 
     </div>
 </div>
-
+<input type="file" id="editProfilePicInput" accept="image/*" style="display:none;">
 <script>
     // Live date
     (function(){
@@ -497,6 +523,45 @@ $user_phone = $columns['phone'] ? $user[$columns['phone']] : '';
         syncIcon();
     });
     function syncIcon(){ document.getElementById('themeIcon').className = theme==='dark'?'fa fa-moon':'fa fa-sun'; }
+    
+    // Profile Picture Upload
+    document.getElementById('editProfilePicInput')?.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const formData = new FormData();
+        formData.append('profile_image', file);
+        
+        fetch('../upload_profile_image.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                const circle = document.getElementById('editAvatarCircle');
+                const initial = document.getElementById('editAvatarInitial');
+                const img = document.getElementById('editAvatarImg');
+                
+                if (initial) initial.remove();
+                const newSrc = '../' + data.path + '?t=' + Date.now();
+                if (!img) {
+                    const newImg = document.createElement('img');
+                    newImg.id = 'editAvatarImg';
+                    newImg.src = newSrc;
+                    circle.insertBefore(newImg, circle.firstChild);
+                } else {
+                    img.src = newSrc;
+                }
+            } else {
+                alert('Upload failed: ' + data.error);
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            alert('Upload failed');
+        });
+    });
 </script>
 </body>
 </html>

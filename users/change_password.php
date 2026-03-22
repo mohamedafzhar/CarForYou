@@ -1,11 +1,7 @@
 <?php
 session_start();
 require_once('../includes/config.php');
-
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
-    exit();
-}
+userAuth();
 
 $user_id = $_SESSION['user_id'];
 

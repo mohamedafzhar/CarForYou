@@ -57,13 +57,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $mail = new PHPMailer(true);
             try {
                 $mail->isSMTP();
-                $mail->Host       = getenv('SMTP_HOST') ?: 'smtp-relay.brevo.com';
+                $mail->Host       = SMTP_HOST;
                 $mail->SMTPAuth   = true;
-                $mail->Username   = getenv('SMTP_USERNAME') ?: '';
-                $mail->Password   = getenv('SMTP_PASSWORD') ?: '';
+                $mail->Username   = SMTP_USERNAME;
+                $mail->Password   = SMTP_PASSWORD;
                 $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-                $mail->Port       = (int)(getenv('SMTP_PORT') ?: 587);
-                $mail->setFrom(getenv('MAIL_FROM') ?: 'noreply@carforyou.com', 'CarForYou Admin');
+                $mail->Port       = (int)SMTP_PORT;
+                $mail->setFrom(MAIL_FROM, 'CarForYou Admin');
                 $mail->addAddress($email, $name);
                 $mail->isHTML(true);
                 $mail->Subject = 'CarForYou Admin — Reset Your Password';

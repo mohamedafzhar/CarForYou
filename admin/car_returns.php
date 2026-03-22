@@ -1,10 +1,7 @@
 <?php
 session_start();
 include 'config.php';
-
-if (!isset($_SESSION['alogin']) || empty($_SESSION['alogin'])) {
-    header('Location: index.php'); exit();
-}
+adminAuth();
 
 date_default_timezone_set('Asia/Colombo');
 
@@ -27,6 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $stmt->bind_param("i", $booking_id);
         $stmt->execute();
         $bk = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
 
         $penalty = 0;
         if ($bk && $actual_return > $bk['to_date']) {
@@ -41,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             if (!is_dir($upload_dir)) mkdir($upload_dir, 0755, true);
 
             $allowed = ['image/jpeg','image/png','image/jpg','image/webp'];
-            $count   = min(count($_FILES['return_photos']['name']), 4); // max 4
+            $count   = min(count($_FILES['return_photos']['name']), 4);
 
             for ($i = 0; $i < $count; $i++) {
                 if ($_FILES['return_photos']['error'][$i] === 0
@@ -69,11 +67,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             WHERE id=?");
         $stmt2->bind_param("sssisi", $actual_return, $car_condition, $damage_notes, $penalty, $photos_json, $booking_id);
         $stmt2->execute();
+        $stmt2->close();
 
         // Set car back to Available
         $stmt3 = $conn->prepare("UPDATE cars SET status='Available' WHERE id=?");
         $stmt3->bind_param("i", $car_id);
         $stmt3->execute();
+        $stmt3->close();
 
         $success_msg = "Car return processed successfully." . ($penalty > 0 ? " Late penalty: <strong>Rs ".number_format($penalty)."</strong>" : "");
     }
@@ -85,10 +85,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $stmt = $conn->prepare("UPDATE booking SET return_status='not_returned', actual_return_date=NULL, car_condition='good', damage_notes=NULL, penalty_amount=0 WHERE id=?");
         $stmt->bind_param("i", $booking_id);
         $stmt->execute();
+        $stmt->close();
 
         $stmt2 = $conn->prepare("UPDATE cars SET status='Booked' WHERE id=?");
         $stmt2->bind_param("i", $car_id);
         $stmt2->execute();
+        $stmt2->close();
 
         $success_msg = "Return undone. Car status set back to Booked.";
     }
@@ -98,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 $filter = $_GET['status'] ?? 'all';
 $search = trim($_GET['search'] ?? '');
 
-$where  = "WHERE b.status = 1"; // only confirmed bookings
+$where  = "WHERE b.status IN (1, 'confirmed', 'Confirmed')"; // only confirmed bookings
 $params = []; $types = "";
 
 if ($filter === 'returned')     $where .= " AND b.return_status='returned'";
@@ -131,10 +133,10 @@ $returns = $stmt->get_result();
 
 // ── STATS ─────────────────────────────────────────────────────
 $s = $conn->query("SELECT
-    SUM(CASE WHEN status=1 THEN 1 ELSE 0 END) AS confirmed,
-    SUM(CASE WHEN status=1 AND return_status='returned' THEN 1 ELSE 0 END) AS returned,
-    SUM(CASE WHEN status=1 AND return_status='not_returned' THEN 1 ELSE 0 END) AS active,
-    SUM(CASE WHEN status=1 AND return_status='not_returned' AND to_date < CURDATE() THEN 1 ELSE 0 END) AS overdue
+    SUM(CASE WHEN status IN (1,'confirmed','Confirmed') THEN 1 ELSE 0 END) AS confirmed,
+    SUM(CASE WHEN status IN (1,'confirmed','Confirmed') AND return_status='returned' THEN 1 ELSE 0 END) AS returned,
+    SUM(CASE WHEN status IN (1,'confirmed','Confirmed') AND return_status='not_returned' THEN 1 ELSE 0 END) AS active,
+    SUM(CASE WHEN status IN (1,'confirmed','Confirmed') AND return_status='not_returned' AND to_date < CURDATE() THEN 1 ELSE 0 END) AS overdue
     FROM booking")->fetch_assoc();
 ?>
 <!DOCTYPE html>
@@ -143,6 +145,7 @@ $s = $conn->query("SELECT
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Car Returns | CarForYou Admin</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%230d1117' width='100' height='100' rx='20'/><path d='M20 55 L25 45 L40 40 L60 40 L75 45 L80 55 L80 60 L20 60 Z' fill='none' stroke='%234f8ef7' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/><circle cx='30' cy='62' r='6' fill='%234f8ef7'/><circle cx='70' cy='62' r='6' fill='%234f8ef7'/><path d='M28 50 L30 45 L35 42 L65 42 L70 45 L72 50' fill='none' stroke='%234f8ef7' stroke-width='2' stroke-linecap='round'/></svg>">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -328,6 +331,37 @@ textarea.form-control{resize:vertical;min-height:72px;}
 
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
 @media(max-width:1100px){.stats-grid{grid-template-columns:repeat(2,1fr);}}
+
+/* MOBILE RESPONSIVE */
+@media(max-width:768px){
+    .sidebar{transform:translateX(-100%);z-index:999;transition:transform 0.3s ease;}
+    .sidebar.open{transform:translateX(0);}
+    .main{margin-left:0!important;width:100%!important;}
+    .top-bar{padding:0 16px;height:56px;}
+    .body{padding:16px;}
+    .mobile-menu-btn{display:flex!important;}
+    .tb-left h2{font-size:0.95rem;}
+    table{font-size:0.75rem;}
+    th,td{padding:8px 6px;}
+    th{font-size:0.6rem;}
+    .badge{font-size:0.6rem;padding:2px 6px;}
+    .btn-action{font-size:0.65rem;padding:4px 8px;}
+    .stats-grid{grid-template-columns:1fr 1fr;}
+    .filter-tabs{flex-wrap:wrap;}
+    .modal{width:95%!important;max-width:none;margin:10px;}
+}
+@media(max-width:480px){
+    table{font-size:0.7rem;}
+    th,td{padding:6px 4px;}
+    .car-cell{flex-direction:column;align-items:flex-start;gap:4px;}
+    .stats-grid{grid-template-columns:1fr 1fr;}
+}
+.mobile-menu-btn{
+    display:none;width:40px;height:40px;background:var(--surface);
+    border:1px solid var(--border2);border-radius:8px;cursor:pointer;
+    align-items:center;justify-content:center;color:var(--text2);font-size:1rem;margin-right:12px;
+}
+.mobile-menu-btn:hover{border-color:var(--accent);color:var(--accent);}
 </style>
 </head>
 <body>
@@ -566,29 +600,24 @@ textarea.form-control{resize:vertical;min-height:72px;}
             <button class="modal-close" onclick="closeModal()"><i class="fa fa-xmark"></i></button>
         </div>
         <div class="modal-body">
-            <form method="POST" id="returnForm enctype="multipart/form-data">
+            <form method="POST" id="returnForm" enctype="multipart/form-data">
                 <input type="hidden" name="action" value="process_return">
                 <input type="hidden" name="booking_id" id="m_booking_id">
                 <input type="hidden" name="car_id" id="m_car_id">
 
-                <!-- Info strip -->
                 <div class="info-strip" id="m_info"></div>
 
-                <!-- Actual return date -->
                 <div class="form-group">
                     <label>Actual Return Date</label>
-                    <input type="date" name="actual_return_date" id="m_return_date" class="form-control" required
-                           onchange="calcPenalty()">
+                    <input type="date" name="actual_return_date" id="m_return_date" class="form-control" required onchange="calcPenalty()">
                 </div>
 
-                <!-- Penalty per day -->
                 <div class="form-group">
                     <label>Late Fee Per Day (Rs) <span style="color:var(--text3);font-weight:400;font-size:0.78rem;">— leave 0 if no late fee</span></label>
-                    <input type="number" name="penalty_per_day" id="m_ppd" class="form-control" value="500" min="0" onchange="calcPenalty()">
+                    <input type="number" name="penalty_per_day" id="m_ppd" class="form-control" value="" min="0" onchange="calcPenalty()">
                     <div class="penalty-preview" id="penaltyPreview"></div>
                 </div>
 
-                <!-- Car condition -->
                 <div class="form-group">
                     <label>Car Condition on Return</label>
                     <div class="condition-grid">
@@ -607,13 +636,11 @@ textarea.form-control{resize:vertical;min-height:72px;}
                     </div>
                 </div>
 
-                <!-- Damage notes -->
                 <div class="form-group">
                     <label>Damage Notes <span style="color:var(--text3);font-weight:400;">(optional)</span></label>
                     <textarea name="damage_notes" id="m_damage" class="form-control" placeholder="Describe any damage, scratches, or issues..."></textarea>
                 </div>
 
-                <!-- Photo upload -->
                 <div class="form-group">
                     <label>Return Photos <span style="color:var(--text3);font-weight:400;">(optional — max 4 photos)</span></label>
                     <div class="photo-upload-area" id="photoUploadArea" onclick="document.getElementById('returnPhotos').click()">
@@ -625,9 +652,6 @@ textarea.form-control{resize:vertical;min-height:72px;}
                     <div class="photo-previews" id="photoPreviews"></div>
                     <div id="photoError" style="font-size:0.78rem;color:var(--red);margin-top:6px;display:none;"></div>
                 </div>
-
-                <button type="submit" class="btn-submit-modal">
-
 
                 <button type="submit" class="btn-submit-modal">
                     <i class="fa fa-circle-check"></i> Confirm Return & Update Car Status

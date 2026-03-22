@@ -1,11 +1,7 @@
 <?php
 session_start();
 require_once('../includes/config.php');
-
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
-    exit();
-}
+userAuth();
 
 $user_id   = $_SESSION['user_id'];
 $user_name = $_SESSION['user_name'] ?? $_SESSION['fname'] ?? 'User';
@@ -30,12 +26,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $from_ts   = strtotime($from_date);
     $to_ts     = strtotime($to_date);
 
-    $stmt = $conn->prepare("SELECT id FROM cars WHERE id = ? AND status = 'Available'");
-    $stmt->bind_param("i", $car_id);
-    $stmt->execute();
-    $car_exists = $stmt->get_result()->num_rows > 0;
-
-    if (!$car_id || !$car_exists) {
+    // Validate inputs
+    if (!$car_id) {
         $error = "Please select a car.";
     } elseif (!$from_date || !$to_date) {
         $error = "Please select both pick-up and return dates.";
@@ -43,6 +35,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = "Pick-up date cannot be in the past.";
     } elseif ($to_ts <= $from_ts) {
         $error = "Return date must be after pick-up date.";
+    } elseif (!isset($_POST['terms']) || $_POST['terms'] !== 'on') {
+        $error = "You must agree to the Terms and Conditions to proceed.";
     } else {
         // Check overlapping bookings (pending=0 or confirmed=1)
         $check = $conn->prepare("
@@ -55,16 +49,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($check->get_result()->num_rows > 0) {
             $error = "This car is already booked for the selected dates. Please choose different dates.";
         } else {
-            $stmt = $conn->prepare("
-                INSERT INTO booking (user_email, car_id, from_date, to_date, message, status, posting_date)
-                VALUES (?, ?, ?, ?, ?, 0, NOW())
-            ");
-            $stmt->bind_param("sisss", $user_email, $car_id, $from_date, $to_date, $message);
+            // USE STORED PROCEDURE instead of direct INSERT
+            $stmt = $conn->prepare("CALL create_booking(?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("isssss", $user_id, $user_email, $car_id, $from_date, $to_date, $message);
+            
             if ($stmt->execute()) {
-                $msg = "Booking submitted! Our team will confirm it shortly.";
+                $result = $stmt->get_result();
+                if ($result && $row = $result->fetch_assoc()) {
+                    if ($row['result'] === 'SUCCESS') {
+                        $booking_id = $row['booking_id'];
+                        $_SESSION['booking_success'] = "Booking submitted! ID: #{$booking_id}. Please proceed to payment.";
+                        header("Location: user_booking.php?new=" . $booking_id);
+                        exit();
+                    } else {
+                        $error = str_replace('ERROR: ', '', $row['result']);
+                    }
+                } else {
+                    // Procedure returned no result set (success case)
+                    $msg = "Booking submitted! Our team will confirm it shortly.";
+                }
+                if ($result) mysqli_free_result($result);
             } else {
-                $error = "Something went wrong. Please try again.";
+                $error = "Something went wrong. Please try again. Error: " . $conn->error;
             }
+            $stmt->close();
         }
     }
 }
@@ -444,6 +452,23 @@ $booked_ranges_json = json_encode($booked_ranges);
     .field input:disabled { opacity:0.35; cursor:not-allowed; }
     .field textarea { resize:none; }
 
+    /* Terms Checkbox */
+    .terms-box {
+        background:var(--surface2);
+        border:1px solid var(--border);
+        border-radius:10px;
+        padding:14px;
+        transition:all 0.2s;
+    }
+    .terms-box:has(input:checked) {
+        border-color:rgba(0,212,255,0.3);
+        background:var(--accentbg);
+    }
+    .terms-box input[type="checkbox"] {
+        cursor:pointer;
+        accent-color:var(--accent);
+    }
+
     /* Price Summary */
     .price-summary {
         background:var(--surface2); border:1px solid var(--border);
@@ -698,6 +723,15 @@ $booked_ranges_json = json_encode($booked_ranges);
                             placeholder="Any special requests or notes..."><?php echo htmlspecialchars($_POST['message'] ?? ''); ?></textarea>
                     </div>
 
+                    <div class="terms-box" style="margin-bottom:16px;">
+                        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+                            <input type="checkbox" name="terms" id="termsCheckbox" style="width:18px;height:18px;margin-top:2px;accent-color:var(--accent);cursor:pointer;">
+                            <span style="font-size:0.8rem;color:var(--text2);line-height:1.5;">
+                                I agree to the <a href="terms.php" target="_blank" style="color:var(--accent);font-weight:600;text-decoration:underline;">Terms and Conditions</a> of the CarForYou rental service.
+                            </span>
+                        </label>
+                    </div>
+
                     <div class="info-box">
                         <i class="fa fa-circle-info"></i>
                         <span>Booking will be reviewed and confirmed by our team. Dates reserved by others are automatically blocked.</span>
@@ -769,7 +803,9 @@ function selectCar(el) {
     // Enable date inputs + submit
     document.getElementById('from_date').disabled = false;
     document.getElementById('to_date').disabled   = false;
-    document.getElementById('submitBtn').disabled = false;
+    updateSubmitBtn();
+
+    // Clear previous date values when switching cars
 
     // Clear previous date values when switching cars
     document.getElementById('from_date').value = '';
@@ -863,6 +899,16 @@ function updateSummary() {
 
 document.getElementById('from_date').addEventListener('change', updateSummary);
 document.getElementById('to_date').addEventListener('change',   updateSummary);
+
+// ── Terms Checkbox — enable submit only when checked ───────────────────────────
+function updateSubmitBtn() {
+    var termsChecked = document.getElementById('termsCheckbox').checked;
+    var carSelected  = selectedCarId > 0;
+    var btn = document.getElementById('submitBtn');
+    btn.disabled = !(termsChecked && carSelected);
+}
+
+document.getElementById('termsCheckbox').addEventListener('change', updateSubmitBtn);
 
 // ── Auto-init for pre-selected car (from ?car_id= or POST re-render) ──────────
 (function(){

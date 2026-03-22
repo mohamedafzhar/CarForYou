@@ -1,11 +1,7 @@
 <?php
 session_start();
 require_once('../includes/config.php');
-
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php?error=Please login first");
-    exit();
-}
+userAuth('login.php?error=Please login first');
 
 $user_id   = $_SESSION['user_id'];
 $user_name = $_SESSION['user_name'] ?? 'User';
@@ -43,16 +39,17 @@ if ($tbl_check && mysqli_num_rows($tbl_check) > 0) {
     }
 }
 
-$confirmed = $pending = $cancelled = $returned = 0;
+$confirmed = $pending = $cancelled = $returned = $awaiting_count = 0;
 $all_bookings = [];
 while ($r = mysqli_fetch_assoc($bookings_result)) {
     $all_bookings[] = $r;
     $st = $r['status'];
     $rs = $r['return_status'] ?? 'not_returned';
-    if ($rs === 'returned')          $returned++;
-    elseif ($st == 1 || $st === 'confirmed') $confirmed++;
-    elseif ($st == 2 || $st === 'cancelled') $cancelled++;
-    else                             $pending++;
+    if ($rs === 'returned') $returned++;
+    elseif ($st === 'awaiting_payment' || $st === 'Awaiting Payment') $awaiting_count++;
+    elseif ($st == 1 || $st === 'confirmed' || $st === 'Confirmed') $confirmed++;
+    elseif ($st == 2 || $st === 'cancelled' || $st === 'Cancelled') $cancelled++;
+    else $pending++;
 }
 ?>
 <!DOCTYPE html>
@@ -145,6 +142,7 @@ while ($r = mysqli_fetch_assoc($bookings_result)) {
     .bk-card::after{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:3px 0 0 3px;}
     .bk-confirmed::after{background:var(--green);}
     .bk-pending::after{background:var(--amber);}
+    .bk-awaiting::after{background:var(--accent);}
     .bk-cancelled::after{background:var(--red);}
     .bk-img{width:190px;flex-shrink:0;overflow:hidden;position:relative;}
     .bk-img img{width:100%;height:100%;object-fit:cover;display:block;transition:transform 0.5s;}
@@ -158,6 +156,7 @@ while ($r = mysqli_fetch_assoc($bookings_result)) {
     .sbadge::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;}
     .sbadge-confirmed{background:var(--greenbg);color:var(--green);}
     .sbadge-pending{background:var(--amberbg);color:var(--amber);}
+    .sbadge-awaiting{background:rgba(0,212,255,0.1);color:var(--accent);}
     .sbadge-cancelled{background:var(--redbg);color:var(--red);}
     .bk-details{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}
     .bk-dl{font-size:0.6rem;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:var(--text3);margin-bottom:5px;}
@@ -225,6 +224,9 @@ while ($r = mysqli_fetch_assoc($bookings_result)) {
         <?php if (isset($_GET['cancelled'])): ?>
         <div class="flash flash-success"><i class="fa fa-circle-check"></i> Booking cancelled successfully.</div>
         <?php endif; ?>
+        <?php if (isset($_GET['new'])): ?>
+        <div class="flash flash-success"><i class="fa fa-circle-check"></i> Booking #<?php echo intval($_GET['new']); ?> submitted! Please complete payment to confirm.</div>
+        <?php endif; ?>
         <?php if (isset($_GET['error'])): ?>
         <div class="flash flash-error"><i class="fa fa-circle-xmark"></i> <?php echo htmlspecialchars($_GET['error']); ?></div>
         <?php endif; ?>
@@ -239,6 +241,7 @@ while ($r = mysqli_fetch_assoc($bookings_result)) {
             <button class="ftab active" onclick="filterBookings('all',this)">All <span class="cbadge"><?php echo $total_rows; ?></span></button>
             <button class="ftab" onclick="filterBookings('confirmed',this)">Confirmed <span class="cbadge"><?php echo $confirmed; ?></span></button>
             <button class="ftab" onclick="filterBookings('pending',this)">Pending <span class="cbadge"><?php echo $pending; ?></span></button>
+            <button class="ftab" onclick="filterBookings('awaiting',this)">Awaiting Payment <span class="cbadge" id="awaitingCount"><?php echo $awaiting_count; ?></span></button>
             <button class="ftab" onclick="filterBookings('cancelled',this)">Cancelled <span class="cbadge"><?php echo $cancelled; ?></span></button>
             <button class="ftab" onclick="filterBookings('returned',this)">Returned <span class="cbadge"><?php echo $returned; ?></span></button>
         </div>
@@ -249,19 +252,20 @@ while ($r = mysqli_fetch_assoc($bookings_result)) {
                 $st = $row['status'];
                 $rs = $row['return_status'] ?? 'not_returned';
                 $is_returned = ($rs === 'returned');
+                $is_awaiting = ($st === 'awaiting_payment');
 
-                if ($is_returned)                                      {$sc='returned'; $st_label='Returned'; $bc='sbadge-returned';}
-                elseif ($st == 1 || $st === 'confirmed')               {$sc='confirmed';$st_label='Confirmed';$bc='sbadge-confirmed';}
-                elseif ($st == 2 || $st === 'cancelled')               {$sc='cancelled';$st_label='Cancelled';$bc='sbadge-cancelled';}
-                else                                                   {$sc='pending';  $st_label='Pending';  $bc='sbadge-pending';}
+                if ($is_returned)                                                   {$sc='returned';  $st_label='Returned';  $bc='sbadge-returned';}
+                elseif ($is_awaiting)                                               {$sc='awaiting';  $st_label='Awaiting Payment'; $bc='sbadge-awaiting'; $awaiting_count++;}
+                elseif ($st == 1 || $st === 'confirmed' || $st === 'Confirmed')  {$sc='confirmed'; $st_label='Confirmed'; $bc='sbadge-confirmed';}
+                elseif ($st == 2 || $st === 'cancelled' || $st === 'Cancelled') {$sc='cancelled'; $st_label='Cancelled'; $bc='sbadge-cancelled';}
+                else                                                           {$sc='pending';  $st_label='Pending'; $bc='sbadge-pending';}
 
                 $days  = max(1, ceil((strtotime($row['to_date']) - strtotime($row['from_date'])) / 86400));
                 $total = $days * $row['price_per_day'];
                 $img   = !empty($row['car_image']) ? "../admin/img/vehicleimages/" . htmlspecialchars($row['car_image']) : "https://images.unsplash.com/photo-1503376780353-7e6692767b70?w=400";
                 $already_reviewed = in_array(intval($row['id']), $reviewed_ids);
-                $is_unpaid = ($row['payment_status'] ?? '') === 'unpaid' && ($st == 1 || $st === 'confirmed');
         ?>
-        <div class="bk-card bk-<?php echo $sc; ?><?php echo $is_unpaid ? ' unpaid-pending' : ''; ?>" data-status="<?php echo $sc; ?>" style="animation-delay:<?php echo $delay; ?>s;">
+        <div class="bk-card bk-<?php echo $sc; ?>" data-status="<?php echo $sc; ?>" style="animation-delay:<?php echo $delay; ?>s;">
             <div class="bk-img"><img src="<?php echo $img; ?>" alt="<?php echo htmlspecialchars($row['car_name']); ?>" onerror="this.src='https://images.unsplash.com/photo-1503376780353-7e6692767b70?w=400'"></div>
             <div class="bk-body">
                 <div class="bk-top">
@@ -277,17 +281,30 @@ while ($r = mysqli_fetch_assoc($bookings_result)) {
                     <div><div class="bk-dl">Duration</div><div class="bk-dv"><i class="fa fa-clock"></i><?php echo $days; ?> day<?php echo $days!=1?'s':''; ?></div></div>
                     <div><div class="bk-dl">Total Cost</div><div class="bk-dv total"><i class="fa fa-tag"></i>LKR <?php echo number_format($total); ?></div></div>
                 </div>
-                <?php if ($is_unpaid): ?>
-                <a href="payment.php?booking_id=<?php echo $row['id']; ?>" style="display:block;margin-top:10px;padding:10px 12px;background:var(--amberbg);border-radius:8px;border:1px solid rgba(251,191,36,0.3);text-decoration:none;transition:all 0.2s;" onmouseover="this.style.borderColor='var(--amber)'" onmouseout="this.style.borderColor='rgba(251,191,36,0.3)'">
-                    <span style="font-size:0.8rem;color:var(--amber);font-weight:600;display:flex;align-items:center;gap:8px;">
-                        <i class="fa fa-credit-card"></i> Payment Required — Click to Pay Now <i class="fa fa-arrow-right" style="margin-left:auto;"></i>
+                <?php if ($st == 0 || $st === 'pending'): ?>
+                <div class="pending-notice" style="margin-top:12px;padding:10px 12px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.2);border-radius:8px;">
+                    <span style="font-size:0.78rem;color:var(--amber);font-weight:500;display:flex;align-items:center;gap:8px;">
+                        <i class="fa fa-hourglass-half"></i> 
+                        Your booking is pending. Our team will verify and confirm your booking shortly.
                     </span>
-                </a>
+                </div>
+                <?php elseif ($is_awaiting): ?>
+                <div class="awaiting-notice" style="margin-top:12px;padding:10px 12px;background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.2);border-radius:8px;">
+                    <span style="font-size:0.78rem;color:var(--accent);font-weight:500;display:flex;align-items:center;gap:8px;">
+                        <i class="fa fa-credit-card"></i> 
+                        Please pay LKR 10,000 advance to confirm your booking. 
+                    </span>
+                    <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
+                        <i class="fa fa-hourglass-half" style="font-size:0.75rem;color:var(--amber);"></i>
+                        <span style="font-size:0.75rem;color:var(--amber);font-weight:600;">Time remaining:</span>
+                        <span class="payment-timer" data-expires="<?php echo strtotime($row['confirmed_at']) + 7200; ?>" style="font-size:0.8rem;color:var(--amber);font-weight:700;">—</span>
+                    </div>
+                </div>
                 <?php endif; ?>
             </div>
             <div class="bk-actions">
-                <?php if ($is_unpaid): ?>
-                <a href="payment.php?booking_id=<?php echo $row['id']; ?>" class="act-pay" style="width:100%;justify-content:center;"><i class="fa fa-credit-card"></i> Pay Now</a>
+                <?php if ($is_awaiting): ?>
+                <a href="payment.php?booking_id=<?php echo $row['id']; ?>&type=advance" class="act-pay" style="width:100%;justify-content:center;"><i class="fa fa-credit-card"></i> Pay Advance</a>
                 <?php elseif ($is_returned): ?>
                     <?php if ($already_reviewed): ?>
                     <span class="act-reviewed"><i class="fa fa-star"></i> Reviewed</span>
@@ -305,7 +322,7 @@ while ($r = mysqli_fetch_assoc($bookings_result)) {
             <div class="empty-icon"><i class="fa fa-calendar-xmark"></i></div>
             <h3>No Bookings Yet</h3>
             <p>You haven't made any bookings. Start exploring our fleet!</p>
-            <a href="../index.php" class="explore-btn"><i class="fa fa-car-side"></i> Explore Cars</a>
+            <a href="../index.php#listing" class="explore-btn"><i class="fa fa-car-side"></i> Explore Cars</a>
         </div>
         <?php endif; ?>
         </div>
@@ -319,6 +336,25 @@ while ($r = mysqli_fetch_assoc($bookings_result)) {
     function syncIcon(){document.getElementById('themeIcon').className=theme==='dark'?'fa fa-moon':'fa fa-sun';}
     function filterBookings(filter,btn){document.querySelectorAll('.ftab').forEach(function(t){t.classList.remove('active');});btn.classList.add('active');document.querySelectorAll('.bk-card').forEach(function(card){card.style.display=(filter==='all'||card.dataset.status===filter)?'flex':'none';});}
     document.querySelectorAll('.flash').forEach(function(el){setTimeout(function(){el.style.transition='opacity 0.5s';el.style.opacity='0';setTimeout(function(){el.style.display='none';},500);},3000);});
+    
+    // Payment countdown timers
+    function updatePaymentTimers(){
+        document.querySelectorAll('.payment-timer').forEach(function(el){
+            var expiresAt = parseInt(el.dataset.expires);
+            var now = Math.floor(Date.now() / 1000);
+            var diff = expiresAt - now;
+            if(diff <= 0){
+                el.textContent = 'Expired!';
+                el.style.color = 'var(--red)';
+            } else {
+                var mins = Math.floor(diff / 60);
+                var secs = diff % 60;
+                el.textContent = mins + ':' + (secs < 10 ? '0' : '') + secs;
+            }
+        });
+    }
+    updatePaymentTimers();
+    setInterval(updatePaymentTimers, 1000);
 </script>
 </body>
 </html>
